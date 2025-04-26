@@ -1,0 +1,24 @@
+[linter]
+select = [
+  "E", "F", "W",  # Basic errors/warnings
+  "B",   # Bugbear (common pitfalls)
+  "C4",  # Comprehensions
+  "S",   # Security (bandit)
+  "UP",  # Pyupgrade (modern Python)
+  "I",   # Import sorting
+  "D",   # Docstrings
+  "PL",  # Pylint-equivalent rules
+  "RUF", # Ruff-specific rules
+]
+ignore = [
+  "E501",  # Line length (handled separately)
+  "D1",    # Docstring conventions
+  "PLR09", # Too many branches
+]
+
+[per-file-ignores]
+"tests/*" = ["S101"]  # Allow asserts in tests
+"migrations/*" = ["E501"]  # Relax style in migrations
+
+[pyupgrade]
+keep-runtime-typing = true
