@@ -1,0 +1,42 @@
+{
+  "E501": {
+    "beginner": {
+      "title": "Line Too Long",
+      "description": "Line {line} in {file} is too long ({message})",
+      "why": "Long lines are hard to read (PEP 8 rule).",
+      "fix": "Break the line into multiple lines."
+    },
+    "intermediate": {
+      "title": "PEP 8 Violation: E501",
+      "description": "Line {line} exceeds 79 characters ({message})",
+      "why": "PEP 8 recommends limiting line length to 79 chars.",
+      "fix": "Use parentheses or backslashes for line continuation."
+    },
+    "advanced": {
+      "title": "Line Length Optimization",
+      "description": "Line {line} length affects readability ({message})",
+      "why": "Long lines impact code reviews and tooling.",
+      "fix": "Refactor using these patterns: [...]"
+    }
+  },
+  "generic": {
+    "beginner": {
+      "title": "Code Issue: {code}",
+      "description": "Found in {file} at line {line}: {message}",
+      "why": "This is a generic coding issue.",
+      "fix": "Consult documentation for {code}."
+    },
+    "intermediate": {
+      "title": "Issue: {code}",
+      "description": "{file}:{line} - {message}",
+      "why": "Standard coding issue requiring attention.",
+      "fix": "Research best practices for {code}."
+    },
+    "advanced": {
+      "title": "{code}",
+      "description": "{message} ({file}:{line})",
+      "why": "Technical issue requiring resolution.",
+      "fix": "Implement professional solution for {code}."
+    }
+  }
+}

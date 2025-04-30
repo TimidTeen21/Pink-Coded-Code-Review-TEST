@@ -1,0 +1,6 @@
+from typing import Protocol
+from app.models import UserProfile
+
+class IProfileService(Protocol):
+    def get_profile(self, user_id: str) -> UserProfile: ...
+    def save_profile(self, profile: UserProfile) -> None: ...

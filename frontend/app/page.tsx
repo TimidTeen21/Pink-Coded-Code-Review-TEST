@@ -1,28 +1,17 @@
 'use client'
 import { useState, useRef, ChangeEvent } from 'react'
-import { FiUpload, FiCode, FiCheckCircle, FiFolder, FiFile, FiX } from 'react-icons/fi'
+import { 
+  FiUpload, 
+  FiCode, 
+  FiCheckCircle, 
+  FiFolder, 
+  FiFile, 
+  FiX,
+  FiUser,
+  FiAward
+} from 'react-icons/fi'
 import { AnalysisResults } from '@/components'
-
-interface Issue {
-  type: 'error' | 'warning' | 'info' | 'convention' | 'refactor'
-  file: string
-  line: number
-  message: string
-  code: string
-  symbol?: string
-  path?: string
-}
-
-interface AnalysisResult {
-  project_type: string
-  linter: string
-  analysis: {
-    success: boolean
-    issues?: Issue[]
-    error?: string
-    raw_stderr?: string
-  }
-}
+import { ExperienceLevel, AnalysisResult } from '@/types'
 
 export default function Analyzer() {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -30,6 +19,7 @@ export default function Analyzer() {
   const [error, setError] = useState('')
   const [selectedZip, setSelectedZip] = useState<File | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>('intermediate')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleDrag = (e: React.DragEvent) => {
@@ -94,6 +84,7 @@ export default function Analyzer() {
 
     const formData = new FormData()
     formData.append('zip_file', selectedZip)
+    formData.append('experience_level', experienceLevel)
 
     try {
       const response = await fetch('http://localhost:8000/api/v1/analysis/analyze-zip', {
@@ -140,6 +131,32 @@ export default function Analyzer() {
 
         <div className="bg-gray-800/50 backdrop-blur-lg rounded-xl p-8 border border-pink-flamingo/20">
           <form onSubmit={handleZipUpload} className="space-y-6">
+            {/* Experience Level Selector */}
+            <div className="flex flex-col space-y-2">
+              <label className="text-sm text-gray-300 flex items-center gap-2">
+                <FiUser className="h-4 w-4" />
+                Your Experience Level
+              </label>
+              <div className="flex gap-2">
+                {(['beginner', 'intermediate', 'advanced'] as ExperienceLevel[]).map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() => setExperienceLevel(level)}
+                    className={`px-3 py-1 text-sm rounded-full flex items-center gap-1 transition-colors ${
+                      experienceLevel === level
+                        ? 'bg-pink-flamingo text-dark-triangle'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    <FiAward className="h-3 w-3" />
+                    {level.charAt(0).toUpperCase() + level.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* File Upload Area */}
             <div 
               className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
                 dragActive 
@@ -221,7 +238,7 @@ export default function Analyzer() {
           <div className="mt-8">
             {results && (
               <div className="animate-fade-in">
-                <AnalysisResults result={results} />
+                <AnalysisResults result={results} userId="exampleUserId" />
               </div>
             )}
           </div>

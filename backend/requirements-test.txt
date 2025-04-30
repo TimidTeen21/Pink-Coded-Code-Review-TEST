@@ -1,0 +1,10 @@
+# backend/requirements-test.txt
+fastapi==0.109.0
+starlette==0.35.1
+httpx==0.25.0
+pytest==8.3.0
+toml==0.10.2
+python-multipart==0.0.20
+pydantic_core==2.33.1
+bandit==1.7.7
+pydantic==1.10.22  # Explicitly specify Pydantic v1 for compatibility
