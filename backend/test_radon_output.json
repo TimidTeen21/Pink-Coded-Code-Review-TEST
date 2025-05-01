@@ -1,0 +1,13 @@
+[
+    {
+      "filename": "backend/app/main.py",
+      "methods": [
+        {
+          "name": "complex_function",
+          "lineno": 10,
+          "complexity": 8
+        }
+      ],
+      "classes": []
+    }
+  ]

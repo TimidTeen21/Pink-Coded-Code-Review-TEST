@@ -27,7 +27,11 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [editorContent, setEditorContent] = useState('');
 
-  if (!result) return null;
+  if (!result) {
+    console.log("No results available");
+    return null;
+  }
+  console.log("Full results object:", result);
 
   // Helper functions
   const getSeverityIcon = (type: Issue['type']) => {
@@ -97,8 +101,13 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
   };
 
   // Data processing
-  const hasError = !!result.analysis.error;
-  const issues = result.analysis.issues || [];
+  const hasError = !!result.main_analysis?.error;
+  const issues = [
+    ...(result.main_analysis?.issues || []),
+    ...(result.complexity_analysis?.issues || []),
+    ...(result.security_scan?.issues || [])
+  ];
+  console.log("Collected issues:", issues);
   const hasIssues = issues.length > 0;
 
   const issuesWithIds = issues.map(issue => ({
@@ -124,7 +133,7 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
             <span>Project Type: {result.project_type}</span>
             <span>Linter: {result.linter}</span>
             <span className={hasError ? 'text-red-400' : 'text-green-400'}>
-              {hasError ? 'Failed' : 'Success'}
+               {hasError ? 'Failed' : 'Success'}
             </span>
           </div>
         </div>
@@ -140,11 +149,11 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
         <div className="p-4 bg-red-900/20 border border-red-400/30 rounded-lg">
           <div className="flex items-center gap-2 text-red-400">
             <FiAlertTriangle className="h-4 w-4" />
-            <span>Error: {result.analysis.error}</span>
+            <span>Error: {result.main_analysis?.error}</span>
           </div>
-          {result.analysis.raw_stderr && (
+          {result.main_analysis?.raw?.stderr && (
             <pre className="mt-2 text-xs text-red-300 overflow-auto max-h-40">
-              {result.analysis.raw_stderr}
+              {result.main_analysis.raw.stderr}
             </pre>
           )}
         </div>

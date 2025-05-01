@@ -10,31 +10,62 @@ export type IssueType =
   | 'security' 
   | 'complexity';
 
-export interface Issue {
-  id: string;
-  type: IssueType;
-  file: string;
-  line: number;
-  message: string;
-  code: string;
-  url?: string;
-  explanation?: {
-    why: string;
-    fix: string;
-    example?: string;
-  };
-}
+  interface Issue {
+    type: string;
+    file: string;
+    line: number;
+    message: string;
+    code: string;
+    url?: string;
+    explanation?: {
+      why: string;
+      fix: string;
+      example?: string;
+    };
+  }
 
 export interface AnalysisResult {
-  project_type: string;
-  linter: string;
-  analysis: {
-    success: boolean;
+  main_analysis?: {
     issues?: Issue[];
     error?: string;
-    raw_stderr?: string;
+    success?: boolean;
+    raw?: {
+      stderr?: string;
+    };
+  };
+  complexity_analysis?: {
+    issues?: Issue[];
+    error?: string;
+    success?: boolean;
+  };
+  security_scan?: {
+    issues?: Issue[];
+    error?: string;
+    success?: boolean;
+  };
+  
+  project_type: string;
+  linter: string;
+}
+
+/* Deepseek version
+interface AnalysisResult {
+  project_type: string;
+  linter: string;
+  main_analysis: {
+    issues: Issue[];
+    error?: string;
+  };
+  complexity_analysis: {
+    issues: Issue[];
+    error?: string;
+  };
+  security_scan: {
+    issues: Issue[];
+    error?: string;
   };
 }
+*/
 
 export interface UserProfile {
   experienceLevel: ExperienceLevel;
@@ -42,3 +73,4 @@ export interface UserProfile {
   learnedConcepts: string[];
   weakAreas: string[];
 }
+

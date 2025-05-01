@@ -99,15 +99,17 @@ export default function Analyzer() {
 
       const data: AnalysisResult = await response.json()
       setResults(data)
+      console.log("Analysis results received:", data);
     } catch (err) {
       console.error('Analysis error:', err)
       setError(err instanceof Error ? err.message : 'Upload failed')
       setResults({
         project_type: 'error',
         linter: 'none',
-        analysis: {
+        main_analysis: {
           success: false,
-          error: err instanceof Error ? err.message : 'Upload failed'
+          error: err instanceof Error ? err.message : 'Upload failed',
+          raw: undefined // Add a default value for 'raw', adjust as needed
         }
       })
     } finally {

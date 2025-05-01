@@ -172,44 +172,56 @@ def parse_linter_output(output: str, linter: str, base_path: Path) -> List[Dict[
         return []
 
 def parse_radon_output(output: str, base_path: Path) -> List[Dict[str, Any]]:
-    """Parse radon complexity output into standardized format"""
     try:
-        # Handle both string and pre-parsed JSON
-        if isinstance(output, str):
-            if not output.strip():
-                return []
-            results = json.loads(output)
-        else:
-            results = output
-            
+        if not output.strip():
+            return []
+
+        # Handle potential double-encoded JSON
+        try:
+            data = json.loads(output)
+            if isinstance(data, str):
+                data = json.loads(data)  # Handle rare double-encoded case
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON from Radon: {output[:200]}...")
+            return []
+
         issues = []
-        for file_result in results:
-            file_path = Path(file_result["filename"])
-            rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else file_result["filename"]
-            
-            for method in file_result.get("methods", []):
+        for file_data in data:
+            if not isinstance(file_data, dict):
+                continue
+                
+            filename = file_data.get("filename", "")
+            file_path = Path(filename)
+            rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else filename
+
+            # Process methods
+            for method in file_data.get("methods", []):
+                if not isinstance(method, dict):
+                    continue
                 issues.append({
                     "type": "complexity",
                     "file": rel_path,
-                    "line": method["lineno"],
-                    "message": f"Method '{method['name']}' complexity {method['complexity']}",
-                    "code": f"RADON-M{method['complexity']}",
-                    "url": "https://radon.readthedocs.io/en/latest/intro.html"
+                    "line": method.get("lineno", 0),
+                    "message": f"Method '{method.get('name', '')}' complexity {method.get('complexity', 0)}",
+                    "code": f"RADON-M{method.get('complexity', 0)}",
+                    "linter": "radon"
                 })
-                
-            for class_result in file_result.get("classes", []):
+
+            # Process classes
+            for cls in file_data.get("classes", []):
+                if not isinstance(cls, dict):
+                    continue
                 issues.append({
                     "type": "complexity",
                     "file": rel_path,
-                    "line": class_result["lineno"],
-                    "message": f"Class '{class_result['name']}' complexity {class_result['complexity']}",
-                    "code": f"RADON-C{class_result['complexity']}",
-                    "url": "https://radon.readthedocs.io/en/latest/intro.html"
+                    "line": cls.get("lineno", 0),
+                    "message": f"Class '{cls.get('name', '')}' complexity {cls.get('complexity', 0)}",
+                    "code": f"RADON-C{cls.get('complexity', 0)}",
+                    "linter": "radon"
                 })
-                
         return issues
     except Exception as e:
-        logger.error(f"Error parsing radon output: {e}")
+        logger.error(f"Radon parse error: {str(e)}")
         return []
 
 async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
@@ -284,7 +296,14 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
         # Parse output
         issues = []
         if linter == Linter.RADON:
-            issues = parse_radon_output(result.stdout, project_path)
+            try:
+                radon_data = json.loads(result.stdout)
+                if isinstance(radon_data, str):  # Handle unexpected string output
+                    radon_data = json.loads(radon_data)
+                issues = parse_radon_output(json.dumps(radon_data), project_path)
+            except Exception as e:
+                logger.error(f"Radon parse failed: {e}")
+                issues = []
         else:
             issues = parse_linter_output(result.stdout, linter, project_path)
         
@@ -330,6 +349,8 @@ async def run_linter_analysis(project_path: Path) -> Dict[str, Any]:
     
     return {
         "project_type": project_type,
+        "linter": "ruff" if project_type == ProjectType.WEB else "pylint",
+        "complexity": "radon",
         "security_scan": {
             "success": bandit_result["success"],
             "issues": bandit_result.get("issues", []),

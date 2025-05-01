@@ -159,47 +159,41 @@ def parse_bandit_output(
         print(f"Bandit parse error: {str(e)}")
         return []
 
-def parse_radon_output(
-    output: str,
-    base_path: Optional[Path] = None
-) -> List[Dict[str, Any]]:
-    """Parse Radon JSON output into standardized format"""
+def parse_radon_output(output: str, base_path: Optional[Path] = None) -> List[Dict[str, Any]]:
     try:
-        issues = json.loads(output)
-        parsed = []
-        
-        for file_result in issues:
-            file_path = Path(file_result["filename"])
-            rel_path = str(file_path.relative_to(base_path)) if base_path else file_result["filename"]
-            
-            # Process methods
-            for method in file_result.get("methods", []):
-                parsed.append({
-                    "type": IssueSeverity.COMPLEXITY,
+        if not output.strip():
+            return []
+
+        data = json.loads(output)  # Parse JSON
+        issues = []
+
+        for file_data in data:
+            file_path = Path(file_data["filename"])
+            rel_path = str(file_path.relative_to(base_path)) if base_path else file_data["filename"]
+
+            for method in file_data.get("methods", []):
+                issues.append({
+                    "type": "complexity",
                     "file": rel_path,
                     "line": method["lineno"],
-                    "column": 0,
                     "message": f"Method '{method['name']}' has high complexity ({method['complexity']})",
                     "code": f"RADON-M{method['complexity']}",
-                    "complexity": method["complexity"],
-                    "linter": LinterType.RADON
+                    "linter": "radon"
                 })
-            
-            # Process classes
-            for class_result in file_result.get("classes", []):
-                parsed.append({
-                    "type": IssueSeverity.COMPLEXITY,
+
+            for cls in file_data.get("classes", []):
+                issues.append({
+                    "type": "complexity",
                     "file": rel_path,
-                    "line": class_result["lineno"],
-                    "column": 0,
-                    "message": f"Class '{class_result['name']}' has high complexity ({class_result['complexity']})",
-                    "code": f"RADON-C{class_result['complexity']}",
-                    "complexity": class_result["complexity"],
-                    "linter": LinterType.RADON
+                    "line": cls["lineno"],
+                    "message": f"Class '{cls['name']}' has high complexity ({cls['complexity']})",
+                    "code": f"RADON-C{cls['complexity']}",
+                    "linter": "radon"
                 })
-        return parsed
+
+        return issues
     except Exception as e:
-        print(f"Radon parse error: {str(e)}")
+        print(f"Radon parse error: {e}")
         return []
 
 def combine_issues(
