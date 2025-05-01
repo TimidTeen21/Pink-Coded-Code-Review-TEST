@@ -65,12 +65,12 @@ class LinterConfig:
     @staticmethod
     def get_bandit_config():
         return {
-            'target': ['*'],  # Scan everything
+            'target': ['*'],
             'recursive': True,
-            'confidence': 'high',  # Filter low-confidence findings
-            'severity': 'medium',  # Minimum severity level
-            'tests': ['*'],  # Include test files
-            'skips': [],  # Don't skip any tests
+            'confidence': 'low',  # Changed from 'high'
+            'severity': 'low',    # Changed from 'medium'
+            'tests': [],  # Specific test IDs
+            'skips': []
         }
 
 def setup_linter_config(linter: str) -> Path:
@@ -122,37 +122,51 @@ def parse_linter_output(output: str, linter: str, base_path: Path) -> List[Dict[
         return []
     
     try:
-        issues = json.loads(output)
-        parsed = []
-        
-        for issue in issues:
+        if linter == Linter.RUFF:
+            issues = json.loads(output)
+            parsed = []
+            for issue in issues:
+                file_path = Path(issue["filename"])
+                rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else issue["filename"]
+                issue_type = "error" if issue["code"].startswith("E") else "warning"
+                parsed.append({
+                    "type": issue_type,
+                    "file": rel_path,
+                    "line": issue["location"]["row"],
+                    "message": issue["message"],
+                    "code": issue["code"],
+                    "url": f"https://docs.astral.sh/ruff/rules/{issue['code'].lower()}"
+                })
+            return parsed
+
+        elif linter == Linter.PYLINT:
+            issues = json.loads(output)
+            parsed = []
+            for issue in issues:
+                file_path = Path(issue["path"])
+                rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else issue["path"]
+                parsed.append({
+                    "type": issue["type"].lower(),
+                    "file": rel_path,
+                    "line": issue["line"],
+                    "message": issue["message"],
+                    "code": issue["message-id"],
+                    "url": ""
+                })
+            return parsed
+
+        elif linter == Linter.BANDIT:
             try:
-                if linter == Linter.RUFF:
+                data = json.loads(output)
+                if not isinstance(data, dict) or "results" not in data:
+                    logger.error(f"Invalid Bandit output structure: {output[:200]}...")
+                    return []
+                
+                parsed = []
+                for issue in data["results"]:
                     file_path = Path(issue["filename"])
                     rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else issue["filename"]
-                    issue_type = "error" if issue["code"].startswith("E") else "warning"
-                    parsed.append({
-                        "type": issue_type,
-                        "file": rel_path,
-                        "line": issue["location"]["row"],
-                        "message": issue["message"],
-                        "code": issue["code"],
-                        "url": f"https://docs.astral.sh/ruff/rules/{issue['code'].lower()}"
-                    })
-                elif linter == Linter.PYLINT:
-                    file_path = Path(issue["path"])
-                    rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else issue["path"]
-                    parsed.append({
-                        "type": issue["type"].lower(),
-                        "file": rel_path,
-                        "line": issue["line"],
-                        "message": issue["message"],
-                        "code": issue["message-id"],
-                        "url": ""
-                    })
-                elif linter == Linter.BANDIT:
-                    file_path = Path(issue["filename"])
-                    rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else issue["filename"]
+                    
                     parsed.append({
                         "type": "security",
                         "file": rel_path,
@@ -160,65 +174,39 @@ def parse_linter_output(output: str, linter: str, base_path: Path) -> List[Dict[
                         "message": issue["issue_text"],
                         "code": issue["test_id"],
                         "url": issue["more_info"],
-                        "severity": issue["issue_severity"].upper()
+                        "severity": issue["issue_severity"].lower(),  # Standardize to lowercase
+                        "confidence": issue["issue_confidence"].lower()
                     })
-            except (ValueError, KeyError) as e:
-                logger.warning(f"Skipping malformed issue: {e}")
-                continue
-                
-        return parsed
+                return parsed
+            except Exception as e:
+                logger.error(f"Bandit parse error: {str(e)}")
+                return []
+
     except Exception as e:
         logger.error(f"Error parsing {linter} output: {e}")
         return []
 
 def parse_radon_output(output: str, base_path: Path) -> List[Dict[str, Any]]:
     try:
-        if not output.strip():
-            return []
-
-        # Handle potential double-encoded JSON
-        try:
-            data = json.loads(output)
-            if isinstance(data, str):
-                data = json.loads(data)  # Handle rare double-encoded case
-        except json.JSONDecodeError:
-            logger.error(f"Invalid JSON from Radon: {output[:200]}...")
-            return []
-
+        data = json.loads(output)
+        if isinstance(data, str):  # Handle double-encoded JSON
+            data = json.loads(data)
+            
         issues = []
-        for file_data in data:
-            if not isinstance(file_data, dict):
-                continue
-                
-            filename = file_data.get("filename", "")
-            file_path = Path(filename)
-            rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else filename
-
-            # Process methods
-            for method in file_data.get("methods", []):
-                if not isinstance(method, dict):
-                    continue
-                issues.append({
-                    "type": "complexity",
-                    "file": rel_path,
-                    "line": method.get("lineno", 0),
-                    "message": f"Method '{method.get('name', '')}' complexity {method.get('complexity', 0)}",
-                    "code": f"RADON-M{method.get('complexity', 0)}",
-                    "linter": "radon"
-                })
-
-            # Process classes
-            for cls in file_data.get("classes", []):
-                if not isinstance(cls, dict):
-                    continue
-                issues.append({
-                    "type": "complexity",
-                    "file": rel_path,
-                    "line": cls.get("lineno", 0),
-                    "message": f"Class '{cls.get('name', '')}' complexity {cls.get('complexity', 0)}",
-                    "code": f"RADON-C{cls.get('complexity', 0)}",
-                    "linter": "radon"
-                })
+        for file_path, items in data.items():
+            rel_path = str(Path(file_path).relative_to(base_path)) if Path(file_path).is_absolute() else file_path
+            
+            for item in items:
+                if item.get("complexity", 0) > 1:  # Only flag complex items
+                    issues.append({
+                        "type": "complexity",
+                        "file": rel_path,
+                        "line": item["lineno"],
+                        "message": f"{item['type'].title()} '{item['name']}' has high complexity ({item['complexity']})",
+                        "code": f"RADON-{item['rank']}",
+                        "complexity": item["complexity"],
+                        "linter": "radon"
+                    })
         return issues
     except Exception as e:
         logger.error(f"Radon parse error: {str(e)}")
@@ -229,6 +217,12 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
     try:
         logger.info(f"Running {linter} analysis in: {project_path}")
         
+        # In run_single_linter() in analysis.py, before Bandit execution:
+        py_files = list(project_path.rglob("*.py"))
+        logger.info(f"Python files found: {len(py_files)}")
+        for f in py_files[:3]:  # Log first 3 files
+                logger.info(f"Sample file: {f}")
+
         if linter != Linter.RADON:
             if not list(project_path.rglob("*.py")):
                 return {
@@ -283,6 +277,8 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
             cwd=str(project_path),
             timeout=300  # Increased timeout for large projects
         )
+        logger.info(f"Bandit raw stdout:\n{result.stdout[:1000]}...")  # First 1000 chars
+        logger.info(f"Bandit stderr:\n{result.stderr}")
 
         # Handle success codes
         success = True

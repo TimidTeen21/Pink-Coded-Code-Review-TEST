@@ -1,11 +1,4 @@
-# Intentional issues:
-# - Missing docstring (C0114)
-# - Unused variable (W0612)
-
-def read_sensor():
-    value = 42  # W0612
-    return 3.14
-
-class MotorController:
-    def __init__(self):
-        self.speed = 0
+# Test vulnerabilities
+password = "admin123"  # B105
+pickle.loads(b"data")  # B301
+subprocess.call("ls", shell=True)  # B602
