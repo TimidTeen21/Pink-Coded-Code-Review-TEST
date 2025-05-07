@@ -21,6 +21,7 @@ export type IssueType =
       why: string;
       fix: string;
       example?: string;
+      advanced_tip?: string
     };
   }
 

@@ -225,6 +225,13 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
                                 <pre className="text-sm text-gray-300 whitespace-pre-wrap">{issue.explanation.example}</pre>
                               </div>
                             )}
+                            {issue.explanation?.advanced_tip && (
+                            <div className="mt-3 p-3 bg-gray-800/50 border-l-4 border-purple-500">
+                              <h4 className="font-medium text-purple-300">Pro Tip:</h4>
+                               <p className="text-sm text-gray-200">{issue.explanation.advanced_tip}</p>
+                             </div>
+                             )}
+
                             {!feedbackGiven[issue.id] && (
                               <div className="flex gap-2 mt-2">
                                 <button 

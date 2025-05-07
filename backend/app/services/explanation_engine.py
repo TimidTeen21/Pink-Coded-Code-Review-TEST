@@ -98,52 +98,48 @@ class ExplanationEngine:
         return formatted
 
     def _generate_gemini_explanation(self, issue: Issue, profile: UserProfile) -> Dict[str, str]:
-        """Generate explanation using Gemini with enhanced error handling"""
-        if not self.gemini:
-            return {
-                "why": "AI explanation service currently unavailable",
-                "fix": "Please check back later or consult documentation",
-                "source": "error"
-            }
+        prompt = f"""Generate a {profile.experience_level}-friendly explanation for this issue:
+        
+        **Code**: {issue.code}
+        **Message**: {issue.message}
+        **File**: {issue.file}:{issue.line}
+        **Severity**: {issue.severity}
 
-        prompt = f"""As a senior Python developer, explain this code issue to a {profile.experience_level} programmer:
+        Structure your response with these sections:
+        1. "Why" - Impact analysis
+        2. "Fix" - Actionable solution (bullet points)
+        3. "Example" - Code snippet (if applicable)
+        4. "Advanced Tip" - Optional deeper context
 
-**Rule**: {issue.code}
-**Message**: {issue.message}
-**File**: {issue.file}
-**Line**: {issue.line}
-
-Provide:
-1. "Why this matters" - 1-2 sentence impact analysis
-2. "How to fix" - {profile.experience_level}-appropriate solution
-3. "Example" - Code snippet if applicable
-
-Structure your response with these exact section headers:
-### Why
-### Fix
-### Example"""
+        Adapt your response for a {profile.experience_level} developer.
+        """
 
         try:
-            response = self.gemini.generate_content(prompt, stream=False)
-            text = response.text
-            
-            # Parse the structured response
-            sections = {
-                "why": self._extract_section(text, "Why"),
-                "fix": self._extract_section(text, "Fix"),
-                "example": self._extract_section(text, "Example"),
-                "source": f"gemini-{self.current_model.split('/')[-1]}"
-            }
-            return sections
-            
+            response = self.gemini.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.3 if profile.experience_level == "beginner" else 0.7,
+                    "max_output_tokens": 500
+                }
+            )
+            return self._parse_gemini_response(response.text)
         except Exception as e:
-            print(f"Gemini error ({self.current_model}): {str(e)}")
-            return {
-                "why": f"AI explanation failed (model: {self.current_model})",
-                "fix": "Please consult the documentation for this issue",
-                "source": "error"
-            }
+            logger.error(f"Gemini failed: {str(e)}")
+            return self._get_fallback_explanation(issue, profile)
 
+    def _parse_gemini_response(self, text: str) -> Dict[str, str]:
+        sections = ["why", "fix", "example", "advanced_tip"]
+        parsed = {}
+        for section in sections:
+            start = text.lower().find(f"{section}:")
+            if start == -1:
+                parsed[section] = ""
+                continue
+            start += len(section) + 1
+            end = text.find("\n\n", start)
+            parsed[section] = text[start:end].strip() if end != -1 else text[start:].strip()
+        return parsed
+    
     def _extract_section(self, text: str, header: str) -> str:
         """Helper to parse structured response from Gemini"""
         start = text.find(f"### {header}")

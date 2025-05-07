@@ -97,24 +97,23 @@ def setup_linter_config(linter: str) -> Path:
     return config_path
 
 def detect_project_type(project_path: Path) -> str:
-    """Determine project type based on project files"""
-    web_markers = {"requirements.txt", "pyproject.toml", "setup.py"}
-    embedded_markers = {"platformio.ini", "Makefile"}
-    security_markers = {"security", "auth", "crypto"}
+    markers = {
+        ProjectType.WEB: {"requirements.txt", "pyproject.toml", "django", "flask"},
+        ProjectType.EMBEDDED: {"platformio.ini", "Makefile", ".ino", ".c"},
+        ProjectType.SECURITY: {"auth", "crypto", "security", "jwt"}
+    }
     
-    for item in project_path.iterdir():
-        if any(marker in item.name.lower() for marker in security_markers):
-            return ProjectType.SECURITY
-            
-    for marker in web_markers:
-        if (project_path / marker).exists():
-            return ProjectType.WEB
+    scores = {pt: 0 for pt in ProjectType}
+    for item in project_path.rglob("*"):
+        if item.is_file():
+            for pt, patterns in markers.items():
+                if any(p in item.name.lower() or p in str(item.relative_to(project_path)).lower() 
+                      for p in patterns):
+                    scores[pt] += 1
     
-    for marker in embedded_markers:
-        if (project_path / marker).exists():
-            return ProjectType.EMBEDDED
-    
-    return ProjectType.UNKNOWN
+    if max(scores.values()) == 0:
+        return ProjectType.UNKNOWN
+    return max(scores.items(), key=lambda x: x[1])[0]
 
 def parse_linter_output(output: str, linter: str, base_path: Path) -> List[Dict[str, Any]]:
     """Parse linter output into standardized format"""
@@ -188,28 +187,41 @@ def parse_linter_output(output: str, linter: str, base_path: Path) -> List[Dict[
 
 def parse_radon_output(output: str, base_path: Path) -> List[Dict[str, Any]]:
     try:
-        data = json.loads(output)
-        if isinstance(data, str):  # Handle double-encoded JSON
-            data = json.loads(data)
-            
+        # Handle both raw JSON and stringified JSON
+        try:
+            data = json.loads(output)
+            if isinstance(data, str):
+                data = json.loads(data)
+        except json.JSONDecodeError:
+            logger.error(f"Invalid Radon output: {output[:200]}...")
+            return []
+
         issues = []
         for file_path, items in data.items():
             rel_path = str(Path(file_path).relative_to(base_path)) if Path(file_path).is_absolute() else file_path
             
             for item in items:
-                if item.get("complexity", 0) > 1:  # Only flag complex items
-                    issues.append({
-                        "type": "complexity",
-                        "file": rel_path,
-                        "line": item["lineno"],
-                        "message": f"{item['type'].title()} '{item['name']}' has high complexity ({item['complexity']})",
-                        "code": f"RADON-{item['rank']}",
-                        "complexity": item["complexity"],
-                        "linter": "radon"
-                    })
+                if not isinstance(item, dict):
+                    continue
+                    
+                complexity = item.get("complexity", 0)
+                if complexity <= 1:
+                    continue
+                
+                issues.append({
+                    "type": "complexity",
+                    "file": rel_path,
+                    "line": item.get("lineno", 0),
+                    "message": f"{item.get('type', 'item').title()} '{item.get('name', '')}' (complexity: {complexity})",
+                    "code": f"RADON-{item.get('rank', 'U')}",  # 'U' for unknown rank
+                    "complexity": complexity,
+                    "severity": "high" if complexity > 10 else "medium"
+                })
+                
         return issues
+        
     except Exception as e:
-        logger.error(f"Radon parse error: {str(e)}")
+        logger.error(f"Radon parse failed: {str(e)}")
         return []
 
 async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
