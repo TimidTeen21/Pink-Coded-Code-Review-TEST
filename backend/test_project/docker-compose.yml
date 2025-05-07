@@ -1,5 +1,7 @@
 services:
   backend:
+    env_file:
+      - ./backend/.env 
     build: ./backend
     volumes:
       - ./backend:/app
