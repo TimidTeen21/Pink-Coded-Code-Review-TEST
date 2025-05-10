@@ -1,25 +1,31 @@
 # backend/app/routers/explanation_router.py
-from fastapi import APIRouter
-from fastapi.responses import FileResponse
-from pathlib import Path
-from app.services.explanation_templates import ExplanationTemplates
+from fastapi import APIRouter, Query, HTTPException, Depends
+from app.models import Issue
+from app.dependencies import get_explanation_engine
 
-router = APIRouter(prefix="/api/v1/explanations", tags=["explanations"])
-templates = ExplanationTemplates()
+router = APIRouter(
+    prefix="/api/v1/explanations",
+    tags=["explanations"],
+    redirect_slashes=False
+)
 
-@router.get("/template/{issue_code}")
-async def get_template(
-    issue_code: str,
-    level: str = "intermediate"
+@router.get("", response_model=dict)
+async def get_explanation(
+    issue_code: str = Query(..., min_length=1),
+    message: str = Query(..., min_length=1),
+    file: str = Query(""),
+    line: int = Query(0, ge=0),
+    user_id: str = Query(..., min_length=1),
+    engine=Depends(get_explanation_engine)
 ):
-    print(f"Fetching template for issue_code: {issue_code}, level: {level}")
-    template = templates.get_template(issue_code, level)
-    if not template:
-        return {"detail": "Template not found dude"}
-    return template
-
-@router.get("/template-file")
-async def get_raw_template_file():
-    """For admin purposes - download the template JSON"""
-    path = Path(__file__).parent.parent / "services" / "explanation_templates.json"
-    return FileResponse(path)
+    try:
+        issue = Issue(
+            code=issue_code,
+            message=message,
+            file=file,
+            line=line,
+            severity="medium"
+        )
+        return await engine.generate_explanation(issue, user_id)
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
