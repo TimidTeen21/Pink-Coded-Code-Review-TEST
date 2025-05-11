@@ -71,7 +71,7 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
     
     try {
       const response = await fetch(
-        `/api/v1/explanations?issue_code=${issue.code}&message=${encodeURIComponent(issue.message)}&file=${encodeURIComponent(issue.file)}&line=${issue.line}&user_id=${userId}`
+        `http://localhost:8000/api/v1/explanations?issue_code=${issue.code}&message=${encodeURIComponent(issue.message)}&file=${encodeURIComponent(issue.file)}&line=${issue.line}&user_id=${userId}`
       );
       
       if (!response.ok) {
@@ -111,10 +111,9 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
   const handleFeedback = async (issueId: string, isHelpful: boolean) => {
     const issueCode = issueId.split('-').pop() || '';
     setFeedbackStates(prev => ({ ...prev, [issueId]: 'loading' }));
-    setLastFeedbackActions(prev => ({ ...prev, [issueId]: isHelpful ? 'helpful' : 'confusing' }));
-
+  
     try {
-      const response = await fetch('/api/v1/feedback/explanation', {
+      const response = await fetch('http://localhost:8000/api/v1/feedback/explanation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -124,19 +123,16 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
           explanation_level: "intermediate"
         })
       });
-
+  
       if (!response.ok) {
-        throw new Error('Feedback submission failed');
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Feedback submission failed');
       }
-
+  
       setFeedbackStates(prev => ({ ...prev, [issueId]: 'success' }));
-      
-      // Reset feedback state after 3 seconds
-      setTimeout(() => {
-        setFeedbackStates(prev => ({ ...prev, [issueId]: 'idle' }));
-      }, 3000);
+      setTimeout(() => setFeedbackStates(prev => ({ ...prev, [issueId]: 'idle' })), 3000);
     } catch (error) {
-      console.error('Failed to submit feedback:', error);
+      console.error('Full error:', error);
       setFeedbackStates(prev => ({ ...prev, [issueId]: 'error' }));
     }
   };

@@ -4,7 +4,7 @@ from app.models import Issue
 from app.dependencies import get_explanation_engine
 
 router = APIRouter(
-    prefix="/api/v1/explanations",
+    prefix="/explanations",
     tags=["explanations"],
     redirect_slashes=False
 )
