@@ -9,7 +9,6 @@ services:
       - "8000:8000"
     environment:
       - PYTHONPATH=/app
-      - GEMINI_API_KEY=${AIzaSyDVT8_6sBRCvnBwf5Gkx4VB8t1XW8W81Vw}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

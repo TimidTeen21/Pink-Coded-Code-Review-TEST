@@ -3,7 +3,7 @@ import {
   FiAlertTriangle, FiInfo, FiCheckCircle, FiShield, 
   FiCpu, FiFile, FiExternalLink, FiChevronDown, 
   FiChevronUp, FiThumbsUp, FiThumbsDown, FiEdit,
-  FiLoader, FiAlertCircle
+  FiLoader, FiAlertCircle, FiCheck, FiRotateCw, FiX
 } from 'react-icons/fi';
 import { Issue, AnalysisResult } from '@/types';
 import { CodeEditor } from '@/components/CodeEditor/CodeEditor';
@@ -15,7 +15,8 @@ interface AnalysisResultProps {
 
 const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
   const [expandedIssues, setExpandedIssues] = useState<Record<string, boolean>>({});
-  const [feedbackGiven, setFeedbackGiven] = useState<Record<string, boolean>>({});
+  const [feedbackStates, setFeedbackStates] = useState<Record<string, 'idle' | 'loading' | 'success' | 'error'>>({});
+  const [lastFeedbackActions, setLastFeedbackActions] = useState<Record<string, 'helpful' | 'confusing'>>({});
   const [loadingExplanations, setLoadingExplanations] = useState<Record<string, boolean>>({});
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('');
@@ -30,13 +31,20 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
         ...(result.security_scan?.issues || [])
       ];
       setIssuesWithExplanations(allIssues);
+      // Initialize feedback states
+      const initialFeedbackStates = allIssues.reduce((acc, issue) => {
+        const issueId = `${issue.file}-${issue.line}-${issue.code}`;
+        acc[issueId] = 'idle';
+        return acc;
+      }, {} as Record<string, 'idle' | 'loading' | 'success' | 'error'>);
+      setFeedbackStates(initialFeedbackStates);
     }
   }, [result]);
 
   const fetchFileContent = async (filePath: string) => {
     try {
-      // In a real implementation, fetch actual file content from backend
-      const mockContent = `// Mock content for ${filePath}\n// This would be fetched from the server`;
+      // TODO: Replace with actual API call to fetch file content
+      const mockContent = `# Mock content for ${filePath}\n# This would be fetched from the server\n\ndef example_function():\n    """Sample function"""\n    pass`;
       setFileContent(mockContent);
       setActiveFile(filePath);
     } catch (error) {
@@ -50,6 +58,11 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
       ...prev,
       [issueId]: !prev[issueId],
     }));
+
+    // Fetch explanation if not already loaded and expanding
+    if (!expandedIssues[issueId] && !issue.explanation) {
+      fetchExplanation(issue);
+    }
   };
 
   const fetchExplanation = async (issue: Issue) => {
@@ -67,33 +80,13 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
   
       const explanation = await response.json();
       
-      // Handle Gemini-specific response format
-      if (explanation.source?.includes('gemini')) {
-        setIssuesWithExplanations(prev => 
-          prev.map(i => 
-            i.file === issue.file && i.line === issue.line && i.code === issue.code 
-              ? { 
-                  ...i, 
-                  explanation: {
-                    why: explanation.why || "No explanation available",
-                    fix: explanation.fix || "No fix suggestion available",
-                    example: explanation.example,
-                    source: explanation.source
-                  }
-                } 
-              : i
-          )
-        );
-      } else {
-        // Handle template responses
-        setIssuesWithExplanations(prev => 
-          prev.map(i => 
-            i.file === issue.file && i.line === issue.line && i.code === issue.code 
-              ? { ...i, explanation } 
-              : i
-          )
-        );
-      }
+      setIssuesWithExplanations(prev => 
+        prev.map(i => 
+          i.file === issue.file && i.line === issue.line && i.code === issue.code 
+            ? { ...i, explanation } 
+            : i
+        )
+      );
     } catch (error) {
       console.error('Failed to fetch explanation:', error);
       setIssuesWithExplanations(prev => 
@@ -116,20 +109,42 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
   };
 
   const handleFeedback = async (issueId: string, isHelpful: boolean) => {
+    const issueCode = issueId.split('-').pop() || '';
+    setFeedbackStates(prev => ({ ...prev, [issueId]: 'loading' }));
+    setLastFeedbackActions(prev => ({ ...prev, [issueId]: isHelpful ? 'helpful' : 'confusing' }));
+
     try {
-      await fetch('http://localhost:8000/api/v1/feedback/explanation', {
+      const response = await fetch('/api/v1/feedback/explanation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: userId,
-          issue_code: issueId.split('-').pop(),
+          issue_code: issueCode,
           was_helpful: isHelpful,
-          complexity: "intermediate"
+          explanation_level: "intermediate"
         })
       });
-      setFeedbackGiven(prev => ({ ...prev, [issueId]: true }));
+
+      if (!response.ok) {
+        throw new Error('Feedback submission failed');
+      }
+
+      setFeedbackStates(prev => ({ ...prev, [issueId]: 'success' }));
+      
+      // Reset feedback state after 3 seconds
+      setTimeout(() => {
+        setFeedbackStates(prev => ({ ...prev, [issueId]: 'idle' }));
+      }, 3000);
     } catch (error) {
       console.error('Failed to submit feedback:', error);
+      setFeedbackStates(prev => ({ ...prev, [issueId]: 'error' }));
+    }
+  };
+
+  const handleRetryFeedback = (issueId: string) => {
+    const action = lastFeedbackActions[issueId];
+    if (action) {
+      handleFeedback(issueId, action === 'helpful');
     }
   };
 
@@ -184,7 +199,7 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
           </div>
           {result.main_analysis?.raw?.stderr && (
             <pre className="mt-2 text-xs text-red-300 overflow-auto max-h-40">
-              {result.main_analysis.raw.stderr}
+              {result.main_analysis.raw?.stderr}
             </pre>
           )}
         </div>
@@ -214,6 +229,7 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
                   const isLoading = loadingExplanations[issue.id];
                   const hasExplanation = !!issue.explanation;
                   const isExpanded = expandedIssues[issue.id];
+                  const feedbackState = feedbackStates[issue.id] || 'idle';
                   
                   return (
                     <div
@@ -278,22 +294,42 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
                                       <pre className="text-sm text-gray-300 whitespace-pre-wrap">{issue.explanation.example}</pre>
                                     </div>
                                   )}
-                                  {!feedbackGiven[issue.id] && (
-                                    <div className="flex gap-2 mt-2">
-                                      <button 
-                                        onClick={() => handleFeedback(issue.id, true)}
-                                        className="text-xs flex items-center gap-1 bg-green-900/30 hover:bg-green-900/50 px-2 py-1 rounded text-green-300"
-                                      >
-                                        <FiThumbsUp className="h-3 w-3" /> Helpful
-                                      </button>
-                                      <button 
-                                        onClick={() => handleFeedback(issue.id, false)}
-                                        className="text-xs flex items-center gap-1 bg-red-900/30 hover:bg-red-900/50 px-2 py-1 rounded text-red-300"
-                                      >
-                                        <FiThumbsDown className="h-3 w-3" /> Not helpful
-                                      </button>
-                                    </div>
-                                  )}
+
+                                  {/* Feedback Section */}
+                                  <div className="flex gap-2 mt-2">
+                                    {feedbackState === 'idle' ? (
+                                      <>
+                                        <button 
+                                          onClick={() => handleFeedback(issue.id, true)}
+                                          className="text-xs flex items-center gap-1 bg-green-900/30 hover:bg-green-900/50 px-2 py-1 rounded text-green-300 transition-colors"
+                                        >
+                                          <FiThumbsUp className="h-3 w-3" /> Helpful
+                                        </button>
+                                        <button 
+                                          onClick={() => handleFeedback(issue.id, false)}
+                                          className="text-xs flex items-center gap-1 bg-red-900/30 hover:bg-red-900/50 px-2 py-1 rounded text-red-300 transition-colors"
+                                        >
+                                          <FiThumbsDown className="h-3 w-3" /> Confusing
+                                        </button>
+                                      </>
+                                    ) : feedbackState === 'loading' ? (
+                                      <span className="text-xs text-gray-400">Sending feedback...</span>
+                                    ) : feedbackState === 'success' ? (
+                                      <span className="text-xs flex items-center gap-1 text-green-500 animate-[fadeInOut_3s_ease-in-out]">
+                                        <FiCheck className="h-4 w-4" /> Thanks for your feedback!
+                                      </span>
+                                    ) : feedbackState === 'error' ? (
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-red-500">Failed to send</span>
+                                        <button 
+                                          onClick={() => handleRetryFeedback(issue.id)}
+                                          className="text-xs flex items-center gap-1 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded"
+                                        >
+                                          <FiRotateCw className="h-3 w-3" /> Retry
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </div>
                                 </>
                               ) : (
                                 <div className="flex items-center p-3 bg-gray-800/50 text-yellow-400 rounded">
