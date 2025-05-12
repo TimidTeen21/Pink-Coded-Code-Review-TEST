@@ -1,13 +1,47 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
+from pathlib import Path
+import logging
 from pydantic import BaseModel
+from typing import Optional
+import tempfile
+import os
+from app.routers.analysis import ACTIVE_SESSIONS
+from app.routers.analysis import ACTIVE_ANALYSES  # Import the tracking dict
+from app.routers.analysis import ANALYSIS_TEMP_DIRS  # We'll need to add this
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
+
+# Configure logger
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 class DirectoryResponse(BaseModel):
     status: str
     message: str = "Use browser's file picker instead"
 
-@router.post("/select-directory")
-async def select_directory():
-    """Endpoint to inform frontend to use browser picker"""
-    return DirectoryResponse(status="browser-picker-required")
+@router.get("")
+async def get_file_contents(
+    path: str,
+    session_id: Optional[str] = Query(...),
+    temp_dir: str = Query(None)
+):
+    try:
+        # Try exact path first
+        if temp_dir:
+            exact_path = Path(temp_dir) / path
+            if exact_path.exists():
+                return {"content": exact_path.read_text()}
+        
+        # Fallback to session-based lookup
+        if session_id in ACTIVE_SESSIONS:
+            session_path = Path(ACTIVE_SESSIONS[session_id]) / path
+            if session_path.exists():
+                return {"content": session_path.read_text()}
+        
+        raise HTTPException(404, detail=f"File not found at: {path}")
+        
+    except Exception as e:
+        logger.error(f"Failed to read file {path}: {str(e)}")
+        raise HTTPException(500, detail=str(e))
+
+

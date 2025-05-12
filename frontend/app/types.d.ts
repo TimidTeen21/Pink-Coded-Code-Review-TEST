@@ -17,6 +17,7 @@ export type IssueType =
     message: string;
     code: string;
     url?: string;
+    id: string;
     explanation?: {
       why: string;
       fix: string;
@@ -38,6 +39,7 @@ export interface AnalysisResult {
     issues?: Issue[];
     error?: string;
     success?: boolean;
+    
   };
   security_scan?: {
     issues?: Issue[];
@@ -47,7 +49,11 @@ export interface AnalysisResult {
   
   project_type: string;
   linter: string;
+  temp_dir?: string;
+  session_id?: string;
 }
+
+type OnFixType = (updatedIssues: Issue[]) => void;
 
 /* Deepseek version
 interface AnalysisResult {

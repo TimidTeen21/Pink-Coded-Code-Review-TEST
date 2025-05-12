@@ -1,6 +1,7 @@
 #backend\app\routers\analysis.py 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body
 import subprocess
+import uuid
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 import json
@@ -13,6 +14,16 @@ import tempfile
 import zipfile
 from enum import Enum
 import os
+import atexit
+import shutil
+from fastapi.responses import FileResponse
+
+ACTIVE_SESSIONS = {}
+
+ANALYSIS_TEMP_DIRS = {}  # Track analysis directories by session/user
+
+# Track analysis directories by session ID
+ACTIVE_ANALYSES: Dict[str, Path] = {}
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
 
@@ -376,32 +387,73 @@ async def run_linter_analysis(project_path: Path) -> Dict[str, Any]:
         }
     }
 
+def cleanup_temp_dirs():
+    for session_id, temp_dir in ACTIVE_SESSIONS.items():
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception as e:
+            logger.error(f"Error cleaning up {temp_dir}: {e}")
+
+atexit.register(cleanup_temp_dirs)
+
 @router.post("/analyze-zip")
 async def analyze_zip(zip_file: UploadFile = File(...)):
-    """Process uploaded ZIP file"""
-    with tempfile.TemporaryDirectory(prefix="pink-coded-") as temp_dir:
-        try:
-            temp_path = Path(temp_dir)
-            zip_path = temp_path / "upload.zip"
+    session_id = str(uuid.uuid4())
+    temp_dir = tempfile.mkdtemp(prefix=f"pink-coded-{session_id}-")
+    ACTIVE_SESSIONS[session_id] = temp_dir
+    
+    try:
+        zip_path = Path(temp_dir) / "upload.zip"
+        with zip_path.open("wb") as buffer:
+            shutil.copyfileobj(zip_file.file, buffer)
+        
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
+        
+        result = await run_linter_analysis(Path(temp_dir))
+        return {**result, "session_id": session_id, "temp_dir": temp_dir}
+        
+    except Exception as e:
+        logger.error(f"ZIP analysis failed: {e}")
+        raise HTTPException(500, detail=str(e))
+        
+async def analyze_code(
+    code: str = Body(..., embed=True),
+    file_path: str = Body(""),
+    user_id: str = Body("")
+):
+    """Real-time code analysis endpoint"""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".py", mode="w") as tmp:
+            tmp.write(code)
+            tmp.flush()
             
-            # Save and extract
-            with zip_path.open("wb") as buffer:
-                shutil.copyfileobj(zip_file.file, buffer)
+            result = await run_single_linter(Linter.RUFF, Path(tmp.name))
             
-            if not zipfile.is_zipfile(zip_path):
-                raise HTTPException(400, "Invalid ZIP file format")
-            
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(temp_path)
-            
-            result = await run_linter_analysis(temp_path)
+            # Add flamingo-themed messages
+            for issue in result.get("issues", []):
+                issue["flamingo_message"] = generate_flamingo_message(issue)
+                
             return result
             
-        except zipfile.BadZipFile:
-            raise HTTPException(400, "Invalid ZIP file format")
-        except Exception as e:
-            logger.error(f"ZIP analysis failed: {e}")
-            raise HTTPException(500, f"Analysis failed: {e}")
+    except Exception as e:
+        logger.error(f"Real-time analysis failed: {e}")
+        raise HTTPException(500, detail=str(e))
+    
+def generate_flamingo_message(issue: dict) -> str:
+    """Generate playful flamingo-themed messages"""
+    code = issue.get("code", "")
+    message = issue.get("message", "")
+    
+    themes = {
+        "E": "🦩 Oops! Flamingo spotted a nest-building error:",
+        "W": "🦩 Heads up! Flamingo sees something fishy:",
+        "F": "🦩 Feathers ruffled! Formatting issue:",
+        "B": "🦩 Security alert! Flamingo sees a predator:"
+    }
+    
+    prefix = themes.get(code[0], "🦩 Flamingo note:")
+    return f"{prefix} {message}\n\nTry: {issue.get('explanation', {}).get('fix', '')}"
 
 @router.get("/debug-config")
 async def debug_config():
@@ -412,3 +464,110 @@ async def debug_config():
         if config_path.exists():
             configs[linter] = config_path.read_text()
     return configs
+
+# backend/app/routers/analysis.py
+@router.post("/analyze-code")
+async def analyze_code(
+    code: str = Body(...),
+    file_path: str = Body(...),
+    user_id: str = Body(...),
+    session_id: Optional[str] = Body(None)
+):
+    try:
+        # Create temp file in the original analysis directory if possible
+        if session_id and session_id in ACTIVE_ANALYSES:
+            temp_dir = ACTIVE_ANALYSES[session_id]
+            temp_path = temp_dir / file_path.split('/')[-1]  # Use just filename
+        else:
+            temp_dir = tempfile.mkdtemp()
+            temp_path = Path(temp_dir) / "analysis.py"
+            
+        temp_path.write_text(code)
+        
+        # Use RUFF for real-time analysis as it's fastest
+        result = await run_single_linter(Linter.RUFF, temp_path)
+        
+        # Clean up only if we created a temp dir
+        if not (session_id and session_id in ACTIVE_ANALYSES):
+            shutil.rmtree(temp_dir)
+            
+        return result
+        
+    except Exception as e:
+        logger.error(f"Real-time analysis failed: {e}")
+        raise HTTPException(500, detail=str(e))
+    
+@router.post("/apply-fix")
+async def apply_fix(
+    file_path: str = Body(...),
+    issue: dict = Body(...),
+    fix: str = Body(...),
+    session_id: str = Body(...),
+    temp_dir: str = Body(None)
+):
+    try:
+        # Locate the file
+        file_location = None
+        if temp_dir:
+            file_location = Path(temp_dir) / file_path
+        elif session_id in ACTIVE_SESSIONS:
+            file_location = Path(ACTIVE_SESSIONS[session_id]) / file_path
+        
+        if not file_location or not file_location.exists():
+            raise HTTPException(404, detail="File not found")
+        
+        # Apply the fix
+        content = file_location.read_text()
+        lines = content.splitlines()
+        
+        # Simple line replacement - enhance this based on your fix format
+        if issue.get('line'):
+            line_num = issue['line'] - 1
+            if 0 <= line_num < len(lines):
+                lines[line_num] = fix  # Or implement more sophisticated patching
+        
+        new_content = '\n'.join(lines)
+        file_location.write_text(new_content)
+        
+        return {
+            "success": True,
+            "new_content": new_content,
+            "message": "🦩 Flamingo applied the fix!",
+            "file_path": str(file_location)
+        }
+    except Exception as e:
+        logger.error(f"Fix failed: {e}")
+        raise HTTPException(500, detail=str(e))
+    
+@router.post("/export-project")
+async def export_project(
+    session_id: str = Body(...),
+    temp_dir: str = Body(None)
+):
+    try:
+        working_dir = None
+        if temp_dir:
+            working_dir = Path(temp_dir)
+        elif session_id in ACTIVE_SESSIONS:
+            working_dir = Path(ACTIVE_SESSIONS[session_id])
+        
+        if not working_dir or not working_dir.exists():
+            raise HTTPException(404, detail="Project not found")
+        
+        # Create a new ZIP
+        zip_filename = f"pink-coded-export-{session_id[:8]}.zip"
+        zip_path = working_dir.parent / zip_filename
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file in working_dir.rglob('*'):
+                if file.is_file():
+                    zipf.write(file, file.relative_to(working_dir))
+        
+        return FileResponse(
+            path=zip_path,
+            filename=zip_filename,
+            media_type='application/zip'
+        )
+    except Exception as e:
+        logger.error(f"Export failed: {e}")
+        raise HTTPException(500, detail=str(e))

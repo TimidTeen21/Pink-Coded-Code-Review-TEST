@@ -3,8 +3,9 @@ import {
   FiAlertTriangle, FiInfo, FiCheckCircle, FiShield, 
   FiCpu, FiFile, FiExternalLink, FiChevronDown, 
   FiChevronUp, FiThumbsUp, FiThumbsDown, FiEdit,
-  FiLoader, FiAlertCircle, FiCheck, FiRotateCw, FiX
+  FiLoader, FiAlertCircle, FiCheck, FiRotateCw, FiX, FiNavigation, FiDownload,
 } from 'react-icons/fi';
+import { MdAutoFixHigh } from 'react-icons/md';
 import { Issue, AnalysisResult } from '@/types';
 import { CodeEditor } from '@/components/CodeEditor/CodeEditor';
 
@@ -14,6 +15,9 @@ interface AnalysisResultProps {
 }
 
 const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
+  if (!result) {
+    return null; // Ensure a valid ReactNode is returned
+  }
   const [expandedIssues, setExpandedIssues] = useState<Record<string, boolean>>({});
   const [feedbackStates, setFeedbackStates] = useState<Record<string, 'idle' | 'loading' | 'success' | 'error'>>({});
   const [lastFeedbackActions, setLastFeedbackActions] = useState<Record<string, 'helpful' | 'confusing'>>({});
@@ -43,12 +47,26 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
 
   const fetchFileContent = async (filePath: string) => {
     try {
-      // TODO: Replace with actual API call to fetch file content
-      const mockContent = `# Mock content for ${filePath}\n# This would be fetched from the server\n\ndef example_function():\n    """Sample function"""\n    pass`;
-      setFileContent(mockContent);
+      const params = new URLSearchParams({
+        path: filePath,
+        session_id: result?.session_id || '',
+        ...(result?.temp_dir && { temp_dir: result.temp_dir })
+      });
+  
+      const response = await fetch(
+        `http://localhost:8000/api/v1/files?${params.toString()}`
+      );
+      
+      if (!response.ok) throw new Error(await response.text());
+      
+      const { content } = await response.json();
+      setFileContent(content);
       setActiveFile(filePath);
+      
     } catch (error) {
       console.error('Failed to load file:', error);
+      setFileContent(`# Error loading ${filePath}\n# ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setActiveFile(filePath);
     }
   };
 
@@ -62,6 +80,13 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
     // Fetch explanation if not already loaded and expanding
     if (!expandedIssues[issueId] && !issue.explanation) {
       fetchExplanation(issue);
+    }
+  };
+
+  const scrollToEditor = () => {
+    const editorElement = document.getElementById('code-editor-container');
+    if (editorElement) {
+      editorElement.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
@@ -107,6 +132,8 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
       setLoadingExplanations(prev => ({ ...prev, [issueId]: false }));
     }
   };
+
+  
 
   const handleFeedback = async (issueId: string, isHelpful: boolean) => {
     const issueCode = issueId.split('-').pop() || '';
@@ -154,7 +181,123 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
 
   const hasError = !!result.main_analysis?.error;
   const hasIssues = issuesWithExplanations.length > 0;
+
+  const applyFix = async (issue: Issue, fix: string) => {
+    if (!activeFile) return;
+    
+    try {
+      const response = await fetch('http://localhost:8000/api/v1/analysis/apply-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_path: activeFile,
+          issue,
+          fix,
+          user_id: userId
+        })
+      });
+      
+      const result = await response.json();
+      if (result.success) {
+        setFileContent(result.new_content);
+      }
+    } catch (error) {
+      console.error('Fix failed:', error);
+    }
+  };
   
+  const handleCodeChange = async (newContent: string) => {
+    if (!activeFile) return;
+  
+    try {
+      const response = await fetch('http://localhost:8000/api/v1/analysis/analyze-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: newContent,
+          file_path: activeFile,
+          user_id: userId,
+          session_id: result?.session_id,
+          temp_dir: result?.temp_dir
+        })
+      });
+  
+      if (!response.ok) throw new Error(await response.text());
+      
+      const data = await response.json();
+      setIssuesWithExplanations(prev => [
+        ...prev.filter(i => i.file !== activeFile),
+        ...data.issues.map((issue: any) => ({
+          ...issue,
+          file: activeFile
+        }))
+      ]);
+    } catch (error) {
+      console.error('Real-time analysis failed:', error);
+    }
+  };
+
+  const handleViewFile = (filePath: string) => {
+    fetchFileContent(filePath);
+    
+    setTimeout(() => {
+      const editorElement = document.getElementById('code-editor-container');
+      if (editorElement) {
+        editorElement.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
+  };
+
+  const scrollToFirstIssue = () => {
+    if (issuesWithExplanations.length > 0) {
+      const firstIssue = issuesWithExplanations[0];
+      fetchFileContent(firstIssue.file);
+      
+      setTimeout(() => {
+        const editorElement = document.getElementById('code-editor-container');
+        if (editorElement) {
+          editorElement.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        // Highlight the line
+        const lineElement = document.querySelector(`[data-line-number="${firstIssue.line}"]`);
+        if (lineElement) {
+          lineElement.classList.add('flash-highlight');
+          setTimeout(() => lineElement.classList.remove('flash-highlight'), 2000);
+        }
+      }, 100);
+    }
+  };
+  
+  const handleExport = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/v1/analysis/export-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: result?.session_id,
+          temp_dir: result?.temp_dir
+        })
+      });
+  
+      if (!response.ok) throw new Error(await response.text());
+  
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pink-coded-export-${result?.session_id?.slice(0, 8) || 'project'}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+  
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   // Group issues by file
   const issuesByFile = issuesWithExplanations.reduce((acc, issue) => {
     const issueId = `${issue.file}-${issue.line}-${issue.code}`;
@@ -177,6 +320,7 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
             <span className={hasError ? 'text-red-400' : 'text-green-400'}>
               {hasError ? 'Failed' : 'Success'}
             </span>
+            
           </div>
         </div>
         {!hasError && (
@@ -212,12 +356,19 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
                   </span>
                 </div>
                 <button
-                  onClick={() => fetchFileContent(file)}
-                  className="flex items-center gap-1 text-xs text-pink-400 hover:text-pink-300"
-                >
-                  <FiEdit className="h-3 w-3" />
-                  View File
-                </button>
+            onClick={scrollToFirstIssue}
+          className="flex items-center gap-2 px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors"
+>
+  <MdAutoFixHigh className="h-4 w-4" />
+  Peck at the solutions🦩
+</button>
+                <button
+                   onClick={() => handleViewFile(file)}
+                   className="flex items-center gap-1 text-xs text-pink-400 hover:text-pink-300"
+                  >
+                   <FiEdit className="h-3 w-3" />
+                   View File
+                  </button>
               </div>
               
               <div className="space-y-3 mt-2">
@@ -336,6 +487,7 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
                             </div>
                           )}
 
+                          
                           <div className="flex justify-between items-center mt-2">
                             {issue.url && (
                               <a
@@ -347,6 +499,7 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
                                 Learn more <FiExternalLink className="h-3 w-3" />
                               </a>
                             )}
+                            
                             <button
                               onClick={() => toggleExpand(issue)}
                               className="text-xs flex items-center gap-1 text-gray-400 hover:text-gray-200"
@@ -386,15 +539,49 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
       )}
 
       {/* Code Editor Section */}
+      <div id="code-editor-container" className="relative h-full">
       {activeFile && (
         <CodeEditor 
-          code={fileContent}
-          issues={issuesWithExplanations.filter(i => i.file === activeFile)}
-          onClose={() => setActiveFile(null)}
-        />
+        code={fileContent}
+        issues={issuesWithExplanations.filter(i => i.file === activeFile)}
+        activeFile={activeFile}
+        onClose={() => setActiveFile(null)}
+        onFix={applyFix}
+        onContentChange={handleCodeChange}
+      />
       )}
+
+{activeFile && (
+  <div className="flex justify-between items-center p-2 bg-gray-800 border-t border-gray-700">
+    <span className="text-sm text-gray-300">Editing: {activeFile}</span>
+    <div className="flex gap-2">
+      <button
+        onClick={() => setActiveFile(null)}
+        className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded"
+      >
+        Close
+      </button>
+      <button
+        onClick={handleExport}
+        className="px-3 py-1 text-sm bg-green-600 hover:bg-green-500 rounded flex items-center gap-1"
+      >
+        <FiDownload className="h-3 w-3" />
+        Export Project
+      </button>
+    </div>
+  </div>
+)}
+      </div>
     </div>
   );
 };
+
+const applyFix = async (issue: Issue, fix: string) => {
+  // TODO: Implement fix application logic
+  console.log(`Applying fix for ${issue.code}:`, fix);
+  // This would send the fix to your backend and update the file
+};
+
+
 
 export default AnalysisResults;

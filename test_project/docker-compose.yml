@@ -3,7 +3,8 @@ services:
     build: ./backend
     volumes:
       - ./backend:/app
-      - ./test_projects:/code  # Mount the parent directory containing all projects
+      - ./test_projects:/code:ro
+      - /tmp:/tmp  # Allow access to temp files
       - ./backend/ruff.toml:/app/ruff.toml
     ports:
       - "8000:8000"

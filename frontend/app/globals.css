@@ -3,18 +3,20 @@
 @tailwind components;
 @tailwind utilities;
 
-
 @layer components {
   .clip-triangle {
     clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
   }
+
   .animate-fade-in {
     animation: fadeIn 0.5s ease-out;
   }
+
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
   }
+
   @keyframes fadeInOut {
     0% { opacity: 0; transform: translateY(5px); }
     20% { opacity: 1; transform: translateY(0); }
@@ -23,9 +25,118 @@
   }
 }
 
+@keyframes flashHighlight {
+  0% { background-color: rgba(236, 72, 153, 0.3); }
+  100% { background-color: transparent; }
+}
 
 body {
   font-family: 'Inter', sans-serif;
 }
 
-  
+/* Flamingo decorations */
+.flamingo-marker {
+  position: absolute;
+  left: 5px;
+  z-index: 10;
+}
+
+.flamingo-marker.error {
+  color: #ff4d4f;
+}
+
+.flamingo-tooltip {
+  display: none;
+  position: absolute;
+  background: var(--flamingo-pink);
+  padding: 8px;
+  border-radius: 4px;
+  width: 300px;
+  z-index: 100;
+}
+
+.flamingo-marker:hover .flamingo-tooltip {
+  display: block;
+}
+
+.flamingo-fix-btn {
+  margin-top: 8px;
+  background: white;
+  color: var(--flamingo-pink);
+  border: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.flash-highlight {
+  animation: flashHighlight 2s ease-out;
+}
+
+/* Define your flamingo color palette */
+:root {
+  --flamingo-pink: #ff66b2;
+  --flamingo-orange: #ff9933;
+}
+
+/* Editor decorations */
+.squiggly-error {
+  background: rgba(255, 77, 79, 0.1);
+  border-bottom: 2px dashed #ff4d4f;
+}
+
+.squiggly-warning {
+  background: rgba(250, 173, 20, 0.1);
+  border-bottom: 2px dashed #faad14;
+}
+
+.squiggly-security {
+  background: rgba(146, 84, 222, 0.1);
+  border-bottom: 2px dashed #9254de;
+}
+
+.squiggly-complexity {
+  background: rgba(19, 194, 194, 0.1);
+  border-bottom: 2px dashed #13c2c2;
+}
+
+/* Glyph margins */
+.glyph-error::before {
+  content: '✖';
+  color: #ff4d4f;
+}
+
+.glyph-warning::before {
+  content: '⚠';
+  color: #faad14;
+}
+
+.glyph-security::before {
+  content: '🛡';
+  color: #9254de;
+}
+
+.glyph-complexity::before {
+  content: '⟳';
+  color: #13c2c2;
+}
+
+/* Fix popup */
+.fix-popup {
+  animation: fadeIn 0.15s ease-out;
+}
+
+/* Monaco editor line highlighting */
+.monaco-editor .line-numbers {
+  position: relative;
+}
+
+.monaco-editor .line-numbers.flash-highlight::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 100%;
+  background-color: rgba(236, 72, 153, 0.3);
+  animation: flashHighlight 2s ease-out;
+}
