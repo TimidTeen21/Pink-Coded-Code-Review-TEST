@@ -11,6 +11,7 @@ import {
   FiAward
 } from 'react-icons/fi'
 import { AnalysisResults } from '@/components'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { ExperienceLevel, AnalysisResult } from '@/types'
 
 export default function Analyzer() {
@@ -232,9 +233,11 @@ export default function Analyzer() {
 
           <div className="mt-8">
             {results && (
+              <ErrorBoundary>
               <div className="animate-fade-in">
                 <AnalysisResults result={results} userId="exampleUserId" />
               </div>
+              </ErrorBoundary>
             )}
           </div>
         </div>

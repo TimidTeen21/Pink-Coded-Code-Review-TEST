@@ -1,4 +1,4 @@
-#backend\app\routers\analysis.py 
+# backend/app/routers/analysis.py
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body
 import subprocess
 import uuid
@@ -15,21 +15,24 @@ import zipfile
 from enum import Enum
 import os
 import atexit
-import shutil
 from fastapi.responses import FileResponse
 
-ACTIVE_SESSIONS = {}
-
-ANALYSIS_TEMP_DIRS = {}  # Track analysis directories by session/user
-
-# Track analysis directories by session ID
-ACTIVE_ANALYSES: Dict[str, Path] = {}
-
-router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Global state for session management
+ACTIVE_SESSIONS: Dict[str, str] = {}  # session_id -> temp_dir
+ACTIVE_ANALYSES: Dict[str, dict] = {}  # session_id -> analysis results
+ANALYSIS_TEMP_DIRS: Dict[str, Path] = {}  # Track analysis directories by session/user
+
+router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
+
+# Expose session tracking variables to other modules
+router.ACTIVE_SESSIONS = ACTIVE_SESSIONS
+router.ACTIVE_ANALYSES = ACTIVE_ANALYSES
+router.ANALYSIS_TEMP_DIRS = ANALYSIS_TEMP_DIRS
 
 class AnalysisRequest(BaseModel):
     project_path: str
@@ -74,13 +77,13 @@ class LinterConfig:
         }
 
     @staticmethod
-    def get_bandit_config():
+    def get_bandit_config() -> Dict[str, Any]:
         return {
             'target': ['*'],
             'recursive': True,
-            'confidence': 'low',  # Changed from 'high'
-            'severity': 'low',    # Changed from 'medium'
-            'tests': [],  # Specific test IDs
+            'confidence': 'low',
+            'severity': 'low',
+            'tests': [],
             'skips': []
         }
 
@@ -108,6 +111,7 @@ def setup_linter_config(linter: str) -> Path:
     return config_path
 
 def detect_project_type(project_path: Path) -> str:
+    """Detect project type based on file patterns"""
     markers = {
         ProjectType.WEB: {"requirements.txt", "pyproject.toml", "django", "flask"},
         ProjectType.EMBEDDED: {"platformio.ini", "Makefile", ".ino", ".c"},
@@ -126,6 +130,12 @@ def detect_project_type(project_path: Path) -> str:
         return ProjectType.UNKNOWN
     return max(scores.items(), key=lambda x: x[1])[0]
 
+def generate_flamingo_message(issue: dict) -> str:
+    """
+    Generate a user-friendly message for a linter issue.
+    """
+    return f"[{issue.get('type', '').capitalize()}] {issue.get('code', '')}: {issue.get('message', '')}"
+
 def parse_linter_output(output: str, linter: str, base_path: Path) -> List[Dict[str, Any]]:
     """Parse linter output into standardized format"""
     if not output.strip():
@@ -138,14 +148,24 @@ def parse_linter_output(output: str, linter: str, base_path: Path) -> List[Dict[
             for issue in issues:
                 file_path = Path(issue["filename"])
                 rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else issue["filename"]
-                issue_type = "error" if issue["code"].startswith("E") else "warning"
+                issue_type = "warning"  # Default to warning for Ruff
+                
+                # Map specific codes to error level
+                if issue["code"].startswith(("E", "F")):
+                    issue_type = "error"
+                
                 parsed.append({
                     "type": issue_type,
                     "file": rel_path,
                     "line": issue["location"]["row"],
                     "message": issue["message"],
                     "code": issue["code"],
-                    "url": f"https://docs.astral.sh/ruff/rules/{issue['code'].lower()}"
+                    "url": issue.get("url", ""),
+                    "flamingo_message": generate_flamingo_message({
+                        "code": issue["code"],
+                        "message": issue["message"],
+                        "type": issue_type
+                    })
                 })
             return parsed
 
@@ -184,7 +204,7 @@ def parse_linter_output(output: str, linter: str, base_path: Path) -> List[Dict[
                         "message": issue["issue_text"],
                         "code": issue["test_id"],
                         "url": issue["more_info"],
-                        "severity": issue["issue_severity"].lower(),  # Standardize to lowercase
+                        "severity": issue["issue_severity"].lower(),
                         "confidence": issue["issue_confidence"].lower()
                     })
                 return parsed
@@ -197,8 +217,8 @@ def parse_linter_output(output: str, linter: str, base_path: Path) -> List[Dict[
         return []
 
 def parse_radon_output(output: str, base_path: Path) -> List[Dict[str, Any]]:
+    """Parse Radon complexity analysis output"""
     try:
-        # Handle both raw JSON and stringified JSON
         try:
             data = json.loads(output)
             if isinstance(data, str):
@@ -224,7 +244,7 @@ def parse_radon_output(output: str, base_path: Path) -> List[Dict[str, Any]]:
                     "file": rel_path,
                     "line": item.get("lineno", 0),
                     "message": f"{item.get('type', 'item').title()} '{item.get('name', '')}' (complexity: {complexity})",
-                    "code": f"RADON-{item.get('rank', 'U')}",  # 'U' for unknown rank
+                    "code": f"RADON-{item.get('rank', 'U')}",
                     "complexity": complexity,
                     "severity": "high" if complexity > 10 else "medium"
                 })
@@ -240,14 +260,11 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
     try:
         logger.info(f"Running {linter} analysis in: {project_path}")
         
-        # In run_single_linter() in analysis.py, before Bandit execution:
-        py_files = list(project_path.rglob("*.py"))
-        logger.info(f"Python files found: {len(py_files)}")
-        for f in py_files[:3]:  # Log first 3 files
-                logger.info(f"Sample file: {f}")
-
+        # Check for Python files (except for Radon which analyzes complexity)
         if linter != Linter.RADON:
-            if not list(project_path.rglob("*.py")):
+            py_files = list(project_path.rglob("*.py"))
+            logger.info(f"Python files found: {len(py_files)}")
+            if not py_files:
                 return {
                     "success": True,
                     "output": "No Python files found",
@@ -298,17 +315,20 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
             capture_output=True,
             text=True,
             cwd=str(project_path),
-            timeout=300  # Increased timeout for large projects
+            timeout=300
         )
-        logger.info(f"Bandit raw stdout:\n{result.stdout[:1000]}...")  # First 1000 chars
-        logger.info(f"Bandit stderr:\n{result.stderr}")
+
+        # Log output for debugging
+        logger.info(f"{linter} stdout (first 500 chars):\n{result.stdout[:500]}...")
+        if result.stderr:
+            logger.info(f"{linter} stderr:\n{result.stderr}")
 
         # Handle success codes
         success = True
         if linter == Linter.RUFF:
-            success = result.returncode in [0, 4]
+            success = result.returncode in [0, 4]  # 0=no issues, 4=issues found
         elif linter == Linter.BANDIT:
-            success = result.returncode in [0, 1]
+            success = result.returncode in [0, 1]  # 0=no issues, 1=issues found
         else:
             success = result.returncode == 0
 
@@ -366,8 +386,8 @@ async def run_linter_analysis(project_path: Path) -> Dict[str, Any]:
     # Always run complexity analysis
     radon_result = await run_single_linter(Linter.RADON, project_path)
     
-    return {
-        "project_type": project_type,
+    result = {
+        "project_type": project_type.value if isinstance(project_type, Enum) else project_type,
         "linter": "ruff" if project_type == ProjectType.WEB else "pylint",
         "complexity": "radon",
         "security_scan": {
@@ -387,17 +407,24 @@ async def run_linter_analysis(project_path: Path) -> Dict[str, Any]:
         }
     }
 
-def cleanup_temp_dirs():
+    logger.info(f"Final analysis result structure: {json.dumps(result, indent=2)}")
+    return result
+
+async def cleanup_temp_dirs():
     for session_id, temp_dir in ACTIVE_SESSIONS.items():
         try:
             shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception as e:
             logger.error(f"Error cleaning up {temp_dir}: {e}")
+    ACTIVE_SESSIONS.clear()
+    ACTIVE_ANALYSES.clear()
+    ANALYSIS_TEMP_DIRS.clear()
 
 atexit.register(cleanup_temp_dirs)
 
 @router.post("/analyze-zip")
 async def analyze_zip(zip_file: UploadFile = File(...)):
+    """Analyze a ZIP file containing a Python project"""
     session_id = str(uuid.uuid4())
     temp_dir = tempfile.mkdtemp(prefix=f"pink-coded-{session_id}-")
     ACTIVE_SESSIONS[session_id] = temp_dir
@@ -411,86 +438,88 @@ async def analyze_zip(zip_file: UploadFile = File(...)):
             zip_ref.extractall(temp_dir)
         
         result = await run_linter_analysis(Path(temp_dir))
-        return {**result, "session_id": session_id, "temp_dir": temp_dir}
+        ACTIVE_ANALYSES[session_id] = result  # Store full analysis results
+        
+        return {
+            **result,
+            "session_id": session_id,
+            "temp_dir": temp_dir
+        }
         
     except Exception as e:
         logger.error(f"ZIP analysis failed: {e}")
         raise HTTPException(500, detail=str(e))
         
-async def analyze_code(
-    code: str = Body(..., embed=True),
-    file_path: str = Body(""),
-    user_id: str = Body("")
+@router.post("/generate-fix")
+async def generate_fix(
+    code: str = Body(...),
+    issue: dict = Body(...),
+    user_id: str = Body(...)
 ):
-    """Real-time code analysis endpoint"""
+    """Generate a fix for a specific code issue"""
     try:
-        with tempfile.NamedTemporaryFile(suffix=".py", mode="w") as tmp:
-            tmp.write(code)
-            tmp.flush()
-            
-            result = await run_single_linter(Linter.RUFF, Path(tmp.name))
-            
-            # Add flamingo-themed messages
-            for issue in result.get("issues", []):
-                issue["flamingo_message"] = generate_flamingo_message(issue)
-                
-            return result
+        # TODO: Replace with actual DeepSeek API call
+        prompt = f"""Generate a fix for this Python issue:
+        - File: {issue.get('file')}
+        - Line: {issue.get('line')}
+        - Error: {issue.get('code')} - {issue.get('message')}
+        - Code Context:
+        ```python
+        {code}
+        ```
+        
+        Provide ONLY the corrected code with minimal changes.
+        Include brief explanation if the fix is non-trivial."""
+        
+        # Mock response - replace with actual API call
+        if issue.get('code') == 'D100':
+            return {
+                "fix": '"""Module docstring"""\n' + code,
+                "explanation": "Added missing module docstring"
+            }
+        else:
+            return {
+                "fix": code,  # Default to no changes
+                "explanation": "No automatic fix available for this issue type"
+            }
             
     except Exception as e:
-        logger.error(f"Real-time analysis failed: {e}")
+        logger.error(f"Fix generation failed: {e}")
         raise HTTPException(500, detail=str(e))
-    
-def generate_flamingo_message(issue: dict) -> str:
-    """Generate playful flamingo-themed messages"""
-    code = issue.get("code", "")
-    message = issue.get("message", "")
-    
-    themes = {
-        "E": "🦩 Oops! Flamingo spotted a nest-building error:",
-        "W": "🦩 Heads up! Flamingo sees something fishy:",
-        "F": "🦩 Feathers ruffled! Formatting issue:",
-        "B": "🦩 Security alert! Flamingo sees a predator:"
-    }
-    
-    prefix = themes.get(code[0], "🦩 Flamingo note:")
-    return f"{prefix} {message}\n\nTry: {issue.get('explanation', {}).get('fix', '')}"
 
-@router.get("/debug-config")
-async def debug_config():
-    """Debug endpoint to check active linter configs"""
-    configs = {}
-    for linter in [Linter.RUFF, Linter.PYLINT, Linter.BANDIT]:
-        config_path = setup_linter_config(linter)
-        if config_path.exists():
-            configs[linter] = config_path.read_text()
-    return configs
-
-# backend/app/routers/analysis.py
 @router.post("/analyze-code")
 async def analyze_code(
     code: str = Body(...),
     file_path: str = Body(...),
     user_id: str = Body(...),
-    session_id: Optional[str] = Body(None)
+    session_id: str = Body(...),
+    temp_dir: str = Body(None)
 ):
+    """Real-time code analysis endpoint"""
     try:
-        # Create temp file in the original analysis directory if possible
-        if session_id and session_id in ACTIVE_ANALYSES:
-            temp_dir = ACTIVE_ANALYSES[session_id]
-            temp_path = temp_dir / file_path.split('/')[-1]  # Use just filename
+        # Save to the original location if possible
+        if temp_dir:
+            file_location = Path(temp_dir) / file_path.split('/')[-1]
+        elif session_id in ACTIVE_SESSIONS:
+            file_location = Path(ACTIVE_SESSIONS[session_id]) / file_path.split('/')[-1]
         else:
-            temp_dir = tempfile.mkdtemp()
-            temp_path = Path(temp_dir) / "analysis.py"
-            
-        temp_path.write_text(code)
+            file_location = Path(tempfile.mkdtemp()) / "temp_analysis.py"
         
-        # Use RUFF for real-time analysis as it's fastest
-        result = await run_single_linter(Linter.RUFF, temp_path)
+        file_location.write_text(code)
         
-        # Clean up only if we created a temp dir
-        if not (session_id and session_id in ACTIVE_ANALYSES):
-            shutil.rmtree(temp_dir)
-            
+        # Run analysis on the entire project directory
+        analysis_dir = file_location.parent if (temp_dir or session_id in ACTIVE_SESSIONS) else file_location.parent
+        result = await run_linter_analysis(analysis_dir)
+
+        # Ensure issues is always a list
+        if 'main_analysis' in result and not isinstance(result['main_analysis'].get('issues', []), list):
+            result['main_analysis']['issues'] = []
+        if 'complexity_analysis' in result and not isinstance(result['complexity_analysis'].get('issues', []), list):
+            result['complexity_analysis']['issues'] = []
+        if 'security_scan' in result and not isinstance(result['security_scan'].get('issues', []), list):
+            result['security_scan']['issues'] = []
+        
+        # Return all issues, not just from the edited file
         return result
         
     except Exception as e:
@@ -505,6 +534,7 @@ async def apply_fix(
     session_id: str = Body(...),
     temp_dir: str = Body(None)
 ):
+    """Apply a fix to a specific file"""
     try:
         # Locate the file
         file_location = None
@@ -520,11 +550,11 @@ async def apply_fix(
         content = file_location.read_text()
         lines = content.splitlines()
         
-        # Simple line replacement - enhance this based on your fix format
+        # Simple line replacement
         if issue.get('line'):
             line_num = issue['line'] - 1
             if 0 <= line_num < len(lines):
-                lines[line_num] = fix  # Or implement more sophisticated patching
+                lines[line_num] = fix
         
         new_content = '\n'.join(lines)
         file_location.write_text(new_content)
@@ -532,7 +562,7 @@ async def apply_fix(
         return {
             "success": True,
             "new_content": new_content,
-            "message": "🦩 Flamingo applied the fix!",
+            "message": "Fix applied successfully",
             "file_path": str(file_location)
         }
     except Exception as e:
@@ -544,6 +574,7 @@ async def export_project(
     session_id: str = Body(...),
     temp_dir: str = Body(None)
 ):
+    """Export the analyzed project as a ZIP file"""
     try:
         working_dir = None
         if temp_dir:
@@ -571,3 +602,13 @@ async def export_project(
     except Exception as e:
         logger.error(f"Export failed: {e}")
         raise HTTPException(500, detail=str(e))
+
+@router.get("/debug-config")
+async def debug_config():
+    """Debug endpoint to check active linter configs"""
+    configs = {}
+    for linter in [Linter.RUFF, Linter.PYLINT, Linter.BANDIT]:
+        config_path = setup_linter_config(linter)
+        if config_path.exists():
+            configs[linter] = config_path.read_text()
+    return configs

@@ -18,6 +18,7 @@ export type IssueType =
     code: string;
     url?: string;
     id: string;
+    flamingo_message?: string;
     explanation?: {
       why: string;
       fix: string;
@@ -46,11 +47,20 @@ export interface AnalysisResult {
     error?: string;
     success?: boolean;
   };
+
+  session_id?: string;
+  temp_dir?: string;
   
   project_type: string;
   linter: string;
   temp_dir?: string;
   session_id?: string;
+  complexity: string;
+   security_scan: {
+        success: boolean;
+        issues: Issue[];
+        error?: string;
+  };
 }
 
 type OnFixType = (updatedIssues: Issue[]) => void;

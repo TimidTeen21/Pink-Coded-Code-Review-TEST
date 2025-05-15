@@ -5,9 +5,11 @@ from pydantic import BaseModel
 from typing import Optional
 import tempfile
 import os
-from app.routers.analysis import ACTIVE_SESSIONS
-from app.routers.analysis import ACTIVE_ANALYSES  # Import the tracking dict
-from app.routers.analysis import ANALYSIS_TEMP_DIRS  # We'll need to add this
+from app.routers.analysis import router as analysis_router
+
+ACTIVE_SESSIONS = analysis_router.ACTIVE_SESSIONS
+ACTIVE_ANALYSES = analysis_router.ACTIVE_ANALYSES 
+ANALYSIS_TEMP_DIRS = analysis_router.ANALYSIS_TEMP_DIRS
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
 

@@ -1,5 +1,6 @@
 from app.routers import analysis, files
 from fastapi import FastAPI
+import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import feedback_router
 from .routers import feedback_router, analysis, files
@@ -14,7 +15,9 @@ app = FastAPI(
         redirect_slashes=False
     )
 
-
+@app.on_event("shutdown")
+async def shutdown_event():
+    await analysis.cleanup_temp_dirs()
 
 # Add CORS middleware
 app.add_middleware(

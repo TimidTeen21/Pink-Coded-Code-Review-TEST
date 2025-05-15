@@ -146,47 +146,104 @@ export function CodeEditor({
     if (!monacoRef.current) return;
 
     const monaco = monacoRef.current;
-    monaco.languages.registerCodeActionProvider('python', {
-      provideCodeActions: (model, range, context, token) => {
-        const lineNumber = range.startLineNumber;
-        const issue = issues.find(i => i.line === lineNumber);
-        
-        if (!issue) return {
-          actions: [],
-          dispose: () => {}
-        };
+// TODO: Replace with actual user id logic or pass as prop
+const userId = 'demo-user';
 
-        return {
-          actions: [{
-            title: `🦩 Fix: ${issue.message}`,
-            id: 'flamingo-fix',
-            kind: 'quickfix',
-            command: {
-              id: 'flamingo-fix-command',
-              title: `🦩 Fix: ${issue.message}`,
-              arguments: [issue, issue.explanation?.fix]
-            }
+useEffect(() => {
+  if (!monacoRef.current || !editorRef.current) return;
+
+  const monaco = monacoRef.current;
+
+  monaco.languages.registerCodeActionProvider('python', {
+    provideCodeActions: (
+      model: any,
+      range: any,
+      context: any,
+      token: any
+    ) => {
+      const lineNumber = range.startLineNumber;
+      const issuesAtLine = issues.filter(i => i.line === lineNumber);
+
+      if (issuesAtLine.length === 0) return { actions: [], dispose: () => {} };
+
+      return {
+        actions: issuesAtLine.map(issue => ({
+          title: `🦩 Fix: ${issue.message}`,
+          id: `flamingo-fix-${issue.code}`,
+          kind: 'quickfix',
+          command: {
+            id: 'flamingo-fix-command',
+            title: `Fix ${issue.code}`,
+            arguments: [issue]
+          },
+          diagnostics: [{
+            severity: issue.type === 'error' ? monaco.MarkerSeverity.Error :
+                      issue.type === 'warning' ? monaco.MarkerSeverity.Warning :
+                      monaco.MarkerSeverity.Info,
+            message: issue.message,
+            startLineNumber: issue.line,
+            endLineNumber: issue.line,
+            startColumn: 1,
+            endColumn: model.getLineMaxColumn(issue.line)
+          }]
+        })),
+        dispose: () => {}
+      };
+    }
+  });
+
+  // Add custom commands
+  editorRef.current?.addAction({
+    id: 'flamingo-fix-command',
+    label: 'Apply Flamingo Fix',
+    run: async (editor: any, ...args: any[]) => {
+      const [issue] = args;
+      if (!issue) return;
+
+      try {
+        const response = await fetch('http://localhost:8000/api/v1/analysis/generate-fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: editor.getValue(),
+            issue,
+            user_id: userId
+          })
+        });
+
+        if (!response.ok) throw new Error(await response.text());
+        const { fix, explanation } = await response.json();
+
+        // Apply the fix
+        const model = editor.getModel();
+        const lineContent = model.getLineContent(issue.line);
+        const newContent = lineContent.replace(/.*/, fix);
+
+        model.pushEditOperations(
+          [],
+          [{
+            range: new monaco.Range(issue.line, 1, issue.line, lineContent.length + 1),
+            text: newContent
           }],
-          dispose: () => {}
-        };
-      }
-    });
+          () => null
+        );
 
-    // Add custom commands
-    editorRef.current?.addAction({
-      id: 'flamingo-fix-command',
-      label: 'Apply Flamingo Fix',
-      run: (editor: any, ...args: any[]) => {
-        const [issue, fix] = args;
-        if (issue && fix) {
-          onFix(issue, fix);
-        }
-      }
-    });
-  }, [issues]);
+        // Show success notification
+        editorRef.current?.trigger('', 'showQuickFix', {
+          message: 'Fix applied successfully!',
+          type: 'success'
+        });
 
-  // Update decorations when issues change
-  useEffect(() => {
+      } catch (error) {
+        console.error('Fix failed:', error);
+        editorRef.current?.trigger('', 'showQuickFix', {
+          message: `Fix failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          type: 'error'
+        });
+      }
+    }
+  });
+}, [issues]);
     updateDecorations();
   }, [issues]);
 

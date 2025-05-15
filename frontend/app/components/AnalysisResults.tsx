@@ -3,21 +3,18 @@ import {
   FiAlertTriangle, FiInfo, FiCheckCircle, FiShield, 
   FiCpu, FiFile, FiExternalLink, FiChevronDown, 
   FiChevronUp, FiThumbsUp, FiThumbsDown, FiEdit,
-  FiLoader, FiAlertCircle, FiCheck, FiRotateCw, FiX, FiNavigation, FiDownload,
+  FiLoader, FiAlertCircle, FiCheck, FiRotateCw, FiX, FiDownload
 } from 'react-icons/fi';
 import { MdAutoFixHigh } from 'react-icons/md';
 import { Issue, AnalysisResult } from '@/types';
 import { CodeEditor } from '@/components/CodeEditor/CodeEditor';
 
-interface AnalysisResultProps {
+interface AnalysisResultsProps {
   result?: AnalysisResult;
   userId: string;
 }
 
-const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
-  if (!result) {
-    return null; // Ensure a valid ReactNode is returned
-  }
+const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => {
   const [expandedIssues, setExpandedIssues] = useState<Record<string, boolean>>({});
   const [feedbackStates, setFeedbackStates] = useState<Record<string, 'idle' | 'loading' | 'success' | 'error'>>({});
   const [lastFeedbackActions, setLastFeedbackActions] = useState<Record<string, 'helpful' | 'confusing'>>({});
@@ -25,22 +22,43 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('');
   const [issuesWithExplanations, setIssuesWithExplanations] = useState<Issue[]>([]);
+  const [showFixPopup, setShowFixPopup] = useState<{ visible: boolean; fix?: string; explanation?: string; issue?: Issue }>({ 
+    visible: false 
+  });
 
   // Initialize with all issues
   useEffect(() => {
     if (result) {
+      // Normalize all issues to include required fields
       const allIssues = [
-        ...(result.main_analysis?.issues || []),
-        ...(result.complexity_analysis?.issues || []),
-        ...(result.security_scan?.issues || [])
+        ...(result.main_analysis?.issues?.map(issue => ({
+          ...issue,
+          flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
+          url: issue.url || '',
+          explanation: issue.explanation ?? undefined
+        })) || []),
+        ...(result.complexity_analysis?.issues?.map(issue => ({
+          ...issue,
+          flamingo_message: issue.flamingo_message || `🦩 Complexity: ${issue.message}`,
+          url: issue.url || '',
+          explanation: issue.explanation ?? undefined
+        })) || []),
+        ...(result.security_scan?.issues?.map(issue => ({
+          ...issue,
+          flamingo_message: issue.flamingo_message || `🦩 Security: ${issue.message}`,
+          url: issue.url || '',
+          explanation: issue.explanation ?? undefined
+        })) || [])
       ];
+
       setIssuesWithExplanations(allIssues);
-      // Initialize feedback states
+      
       const initialFeedbackStates = allIssues.reduce((acc, issue) => {
         const issueId = `${issue.file}-${issue.line}-${issue.code}`;
         acc[issueId] = 'idle';
         return acc;
       }, {} as Record<string, 'idle' | 'loading' | 'success' | 'error'>);
+      
       setFeedbackStates(initialFeedbackStates);
     }
   }, [result]);
@@ -52,7 +70,7 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
         session_id: result?.session_id || '',
         ...(result?.temp_dir && { temp_dir: result.temp_dir })
       });
-  
+
       const response = await fetch(
         `http://localhost:8000/api/v1/files?${params.toString()}`
       );
@@ -72,21 +90,13 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
 
   const toggleExpand = (issue: Issue) => {
     const issueId = `${issue.file}-${issue.line}-${issue.code}`;
-    setExpandedIssues((prev) => ({
+    setExpandedIssues(prev => ({
       ...prev,
       [issueId]: !prev[issueId],
     }));
 
-    // Fetch explanation if not already loaded and expanding
     if (!expandedIssues[issueId] && !issue.explanation) {
       fetchExplanation(issue);
-    }
-  };
-
-  const scrollToEditor = () => {
-    const editorElement = document.getElementById('code-editor-container');
-    if (editorElement) {
-      editorElement.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
@@ -133,11 +143,10 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
     }
   };
 
-  
-
   const handleFeedback = async (issueId: string, isHelpful: boolean) => {
     const issueCode = issueId.split('-').pop() || '';
     setFeedbackStates(prev => ({ ...prev, [issueId]: 'loading' }));
+    setLastFeedbackActions(prev => ({ ...prev, [issueId]: isHelpful ? 'helpful' : 'confusing' }));
   
     try {
       const response = await fetch('http://localhost:8000/api/v1/feedback/explanation', {
@@ -159,7 +168,7 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
       setFeedbackStates(prev => ({ ...prev, [issueId]: 'success' }));
       setTimeout(() => setFeedbackStates(prev => ({ ...prev, [issueId]: 'idle' })), 3000);
     } catch (error) {
-      console.error('Full error:', error);
+      console.error('Feedback error:', error);
       setFeedbackStates(prev => ({ ...prev, [issueId]: 'error' }));
     }
   };
@@ -171,35 +180,26 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
     }
   };
 
-  if (!result) {
-    return (
-      <div className="p-4 bg-gray-800 rounded-lg text-center">
-        <p className="text-gray-400">No analysis results available</p>
-      </div>
-    );
-  }
-
-  const hasError = !!result.main_analysis?.error;
-  const hasIssues = issuesWithExplanations.length > 0;
-
   const applyFix = async (issue: Issue, fix: string) => {
     if (!activeFile) return;
     
     try {
-      const response = await fetch('http://localhost:8000/api/v1/analysis/apply-fix', {
+      const response: Response = await fetch('http://localhost:8000/api/v1/analysis/apply-fix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           file_path: activeFile,
           issue,
           fix,
+          session_id: result?.session_id,
+          temp_dir: result?.temp_dir,
           user_id: userId
         })
       });
       
-      const result = await response.json();
-      if (result.success) {
-        setFileContent(result.new_content);
+      const applyFixResult = await response.json();
+      if (applyFixResult.success) {
+        setFileContent(applyFixResult.new_content);
       }
     } catch (error) {
       console.error('Fix failed:', error);
@@ -223,17 +223,56 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
       });
   
       if (!response.ok) throw new Error(await response.text());
-      
+  
       const data = await response.json();
+      const issues = [
+        ...(data.main_analysis?.issues || []),
+        ...(data.complexity_analysis?.issues || []),
+        ...(data.security_scan?.issues || [])
+      ];
+      
       setIssuesWithExplanations(prev => [
-        ...prev.filter(i => i.file !== activeFile),
-        ...data.issues.map((issue: any) => ({
+        ...prev.filter(i => i.file !== activeFile.split('/').pop()),
+        ...issues.map((issue: any) => ({
           ...issue,
-          file: activeFile
+          file: activeFile,
+          flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
+          url: issue.url || ''
         }))
       ]);
+      
+      setFileContent(newContent);
+  
     } catch (error) {
       console.error('Real-time analysis failed:', error);
+    }
+  };
+
+  const handleShowFix = async (issue: Issue) => {
+    try {
+      const response = await fetch('http://localhost:8000/api/v1/analysis/generate-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: fileContent,
+          issue,
+          user_id: userId
+        })
+      });
+  
+      if (!response.ok) throw new Error(await response.text());
+      const { fix, explanation } = await response.json();
+  
+      setShowFixPopup({
+        visible: true,
+        fix,
+        explanation,
+        issue
+      });
+  
+    } catch (error) {
+      console.error('Fix failed:', error);
+      alert(`Fix failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -259,7 +298,6 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
           editorElement.scrollIntoView({ behavior: 'smooth' });
         }
         
-        // Highlight the line
         const lineElement = document.querySelector(`[data-line-number="${firstIssue.line}"]`);
         if (lineElement) {
           lineElement.classList.add('flash-highlight');
@@ -306,6 +344,17 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
     return acc;
   }, {} as Record<string, any[]>);
 
+  if (!result) {
+    return (
+      <div className="p-4 bg-gray-800 rounded-lg text-center">
+        <p className="text-gray-400">No analysis results available</p>
+      </div>
+    );
+  }
+
+  const hasError = !!result.main_analysis?.error;
+  const hasIssues = issuesWithExplanations.length > 0;
+
   return (
     <div className="space-y-4">
       {/* Results Header */}
@@ -320,7 +369,6 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
             <span className={hasError ? 'text-red-400' : 'text-green-400'}>
               {hasError ? 'Failed' : 'Success'}
             </span>
-            
           </div>
         </div>
         {!hasError && (
@@ -339,7 +387,7 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
           </div>
           {result.main_analysis?.raw?.stderr && (
             <pre className="mt-2 text-xs text-red-300 overflow-auto max-h-40">
-              {result.main_analysis.raw?.stderr}
+              {result.main_analysis.raw.stderr}
             </pre>
           )}
         </div>
@@ -356,19 +404,12 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
                   </span>
                 </div>
                 <button
-            onClick={scrollToFirstIssue}
-          className="flex items-center gap-2 px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition-colors"
->
-  <MdAutoFixHigh className="h-4 w-4" />
-  Peck at the solutions🦩
-</button>
-                <button
-                   onClick={() => handleViewFile(file)}
-                   className="flex items-center gap-1 text-xs text-pink-400 hover:text-pink-300"
-                  >
-                   <FiEdit className="h-3 w-3" />
-                   View File
-                  </button>
+                  onClick={() => handleViewFile(file)}
+                  className="flex items-center gap-1 text-xs text-pink-400 hover:text-pink-300"
+                >
+                  <FiEdit className="h-3 w-3" />
+                  Peck at the solutions
+                </button>
               </div>
               
               <div className="space-y-3 mt-2">
@@ -487,7 +528,6 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
                             </div>
                           )}
 
-                          
                           <div className="flex justify-between items-center mt-2">
                             {issue.url && (
                               <a
@@ -500,6 +540,14 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
                               </a>
                             )}
                             
+                            <button
+                              onClick={() => handleShowFix(issue)}
+                              className="text-xs flex items-center gap-1 bg-blue-900/30 hover:bg-blue-900/50 px-2 py-1 rounded text-blue-300 transition-colors"
+                            >
+                              <MdAutoFixHigh className="h-3 w-3" />
+                              Show Fix
+                            </button>
+
                             <button
                               onClick={() => toggleExpand(issue)}
                               className="text-xs flex items-center gap-1 text-gray-400 hover:text-gray-200"
@@ -540,48 +588,100 @@ const AnalysisResults: React.FC<AnalysisResultProps> = ({ result, userId }) => {
 
       {/* Code Editor Section */}
       <div id="code-editor-container" className="relative h-full">
-      {activeFile && (
-        <CodeEditor 
-        code={fileContent}
-        issues={issuesWithExplanations.filter(i => i.file === activeFile)}
-        activeFile={activeFile}
-        onClose={() => setActiveFile(null)}
-        onFix={applyFix}
-        onContentChange={handleCodeChange}
-      />
-      )}
+        {activeFile && (
+          <CodeEditor
+            code={fileContent}
+            issues={issuesWithExplanations.filter(i => i.file === activeFile.split('/').pop())}
+            activeFile={activeFile}
+            onClose={() => setActiveFile(null)}
+            onFix={applyFix}
+            onContentChange={handleCodeChange}
+          />
+        )}
 
-{activeFile && (
-  <div className="flex justify-between items-center p-2 bg-gray-800 border-t border-gray-700">
-    <span className="text-sm text-gray-300">Editing: {activeFile}</span>
-    <div className="flex gap-2">
-      <button
-        onClick={() => setActiveFile(null)}
-        className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded"
-      >
-        Close
-      </button>
-      <button
-        onClick={handleExport}
-        className="px-3 py-1 text-sm bg-green-600 hover:bg-green-500 rounded flex items-center gap-1"
-      >
-        <FiDownload className="h-3 w-3" />
-        Export Project
-      </button>
-    </div>
-  </div>
-)}
+        {activeFile && (
+          <div className="flex justify-between items-center p-2 bg-gray-800 border-t border-gray-700">
+            <span className="text-sm text-gray-300">Editing: {activeFile}</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setActiveFile(null)}
+                className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded"
+              >
+                Close
+              </button>
+              <button
+                onClick={handleExport}
+                className="px-3 py-1 text-sm bg-green-600 hover:bg-green-500 rounded flex items-center gap-1"
+              >
+                <FiDownload className="h-3 w-3" />
+                Export Project
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Fix Popup */}
+      {showFixPopup.visible && showFixPopup.issue && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 border border-pink-500 rounded-lg p-6 max-w-lg w-full">
+            <div className="flex justify-between items-start mb-4">
+              <h3 className="text-lg font-bold text-pink-400">
+                Fix for {showFixPopup.issue.code}
+              </h3>
+              <button
+                onClick={() => setShowFixPopup({ visible: false })}
+                className="text-gray-400 hover:text-white"
+              >
+                <FiX className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="mb-4">
+              <h4 className="font-medium text-gray-200 mb-1">Issue:</h4>
+              <p className="text-gray-300">{showFixPopup.issue.message}</p>
+            </div>
+            
+            {showFixPopup.explanation && (
+              <div className="mb-4">
+                <h4 className="font-medium text-blue-300 mb-1">Explanation:</h4>
+                <p className="text-gray-300">{showFixPopup.explanation}</p>
+              </div>
+            )}
+            
+            {showFixPopup.fix && (
+              <div className="mb-6">
+                <h4 className="font-medium text-green-300 mb-1">Suggested Fix:</h4>
+                <pre className="bg-gray-700 p-3 rounded text-sm text-gray-100 overflow-auto">
+                  {showFixPopup.fix}
+                </pre>
+              </div>
+            )}
+            
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  if (showFixPopup.fix && showFixPopup.issue) {
+                    applyFix(showFixPopup.issue, showFixPopup.fix);
+                  }
+                  setShowFixPopup({ visible: false });
+                }}
+                className="px-4 py-2 bg-pink-600 hover:bg-pink-700 rounded text-white"
+              >
+                Apply Fix
+              </button>
+              <button
+                onClick={() => setShowFixPopup({ visible: false })}
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-200"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
-
-const applyFix = async (issue: Issue, fix: string) => {
-  // TODO: Implement fix application logic
-  console.log(`Applying fix for ${issue.code}:`, fix);
-  // This would send the fix to your backend and update the file
-};
-
-
 
 export default AnalysisResults;
