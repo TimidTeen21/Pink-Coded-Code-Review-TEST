@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Editor, { Monaco, useMonaco } from '@monaco-editor/react';
 import type { Issue } from '@/types';
 import { FiWind, FiX, FiCheck, FiCopy } from 'react-icons/fi';
@@ -27,9 +27,15 @@ export function CodeEditor({
   const [showFixPopup, setShowFixPopup] = useState(false);
   const [fixPosition, setFixPosition] = useState({ x: 0, y: 0 });
 
+  // Debounce and analysis state
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const debounceTimer = useRef<NodeJS.Timeout>();
+
   const handleEditorMount = (editor: any, monaco: Monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+
+    
     
     // Set up hover provider
     monaco.languages.registerHoverProvider('python', {
@@ -79,12 +85,28 @@ export function CodeEditor({
 
     // Set initial error markers
     updateDecorations();
-    
-    // Real-time validation
-    editor.onDidChangeModelContent(() => {
-      const currentCode = editor.getValue();
-      onContentChange(currentCode);
-    });
+  };
+
+  // Debounced content change handler
+  const handleEditorChange = (value: string | undefined) => {
+    if (value === undefined) return;
+
+    // Clear previous timer
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+    }
+
+    setIsAnalyzing(true);
+
+    debounceTimer.current = setTimeout(async () => {
+      try {
+        await onContentChange(value);
+      } catch (error) {
+        console.error('Analysis failed:', error);
+      } finally {
+        setIsAnalyzing(false);
+      }
+    }, 500);
   };
 
   const showFixAtPosition = (issue: Issue, x: number, y: number) => {
@@ -141,109 +163,150 @@ export function CodeEditor({
     );
   };
 
+  // Utility for severity color
+  const getSeverityColor = (type: string) => {
+    switch (type) {
+      case 'error': return '#ff4d4f';
+      case 'warning': return '#faad14';
+      case 'security': return '#9254de';
+      case 'complexity': return '#13c2c2';
+      default: return '#1890ff';
+    }
+  };
+
+  // Decorations effect
+  useEffect(() => {
+    if (!monacoRef.current || !editorRef.current) return;
+    
+    // Clear old decorations
+    const oldDecorations = [...decorationsRef.current];
+    decorationsRef.current = editorRef.current.deltaDecorations(
+      oldDecorations,
+      []
+    );
+    
+    // Add new decorations if we have issues
+    if (issues.length > 0) {
+      const monaco = monacoRef.current;
+      decorationsRef.current = editorRef.current.deltaDecorations(
+        [],
+        issues.map(issue => ({
+          range: new monaco.Range(issue.line, 1, issue.line, 1),
+          options: {
+            className: `squiggly-${issue.type}`,
+            glyphMarginClassName: `glyph-${issue.type}`,
+            hoverMessage: {
+              value: `**${issue.code}**: ${issue.message}`,
+              isTrusted: true
+            },
+            minimap: {
+              position: monaco.editor.MinimapPosition.Gutter,
+              color: getSeverityColor(issue.type)
+            }
+          }
+        }))
+      );
+    }
+  }, [issues]);
+
   // Register quick fixes
   useEffect(() => {
-    if (!monacoRef.current) return;
+    if (!monacoRef.current || !editorRef.current) return;
 
     const monaco = monacoRef.current;
-// TODO: Replace with actual user id logic or pass as prop
-const userId = 'demo-user';
+    // TODO: Replace with actual user id logic or pass as prop
+    const userId = 'demo-user';
 
-useEffect(() => {
-  if (!monacoRef.current || !editorRef.current) return;
+    monaco.languages.registerCodeActionProvider('python', {
+      provideCodeActions: (
+        model: any,
+        range: any,
+        context: any,
+        token: any
+      ) => {
+        const lineNumber = range.startLineNumber;
+        const issuesAtLine = issues.filter(i => i.line === lineNumber);
 
-  const monaco = monacoRef.current;
+        if (issuesAtLine.length === 0) return { actions: [], dispose: () => {} };
 
-  monaco.languages.registerCodeActionProvider('python', {
-    provideCodeActions: (
-      model: any,
-      range: any,
-      context: any,
-      token: any
-    ) => {
-      const lineNumber = range.startLineNumber;
-      const issuesAtLine = issues.filter(i => i.line === lineNumber);
-
-      if (issuesAtLine.length === 0) return { actions: [], dispose: () => {} };
-
-      return {
-        actions: issuesAtLine.map(issue => ({
-          title: `🦩 Fix: ${issue.message}`,
-          id: `flamingo-fix-${issue.code}`,
-          kind: 'quickfix',
-          command: {
-            id: 'flamingo-fix-command',
-            title: `Fix ${issue.code}`,
-            arguments: [issue]
-          },
-          diagnostics: [{
-            severity: issue.type === 'error' ? monaco.MarkerSeverity.Error :
-                      issue.type === 'warning' ? monaco.MarkerSeverity.Warning :
-                      monaco.MarkerSeverity.Info,
-            message: issue.message,
-            startLineNumber: issue.line,
-            endLineNumber: issue.line,
-            startColumn: 1,
-            endColumn: model.getLineMaxColumn(issue.line)
-          }]
-        })),
-        dispose: () => {}
-      };
-    }
-  });
-
-  // Add custom commands
-  editorRef.current?.addAction({
-    id: 'flamingo-fix-command',
-    label: 'Apply Flamingo Fix',
-    run: async (editor: any, ...args: any[]) => {
-      const [issue] = args;
-      if (!issue) return;
-
-      try {
-        const response = await fetch('http://localhost:8000/api/v1/analysis/generate-fix', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            code: editor.getValue(),
-            issue,
-            user_id: userId
-          })
-        });
-
-        if (!response.ok) throw new Error(await response.text());
-        const { fix, explanation } = await response.json();
-
-        // Apply the fix
-        const model = editor.getModel();
-        const lineContent = model.getLineContent(issue.line);
-        const newContent = lineContent.replace(/.*/, fix);
-
-        model.pushEditOperations(
-          [],
-          [{
-            range: new monaco.Range(issue.line, 1, issue.line, lineContent.length + 1),
-            text: newContent
-          }],
-          () => null
-        );
-
-        // Show success notification
-        editorRef.current?.trigger('', 'showQuickFix', {
-          message: 'Fix applied successfully!',
-          type: 'success'
-        });
-
-      } catch (error) {
-        console.error('Fix failed:', error);
-        editorRef.current?.trigger('', 'showQuickFix', {
-          message: `Fix failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          type: 'error'
-        });
+        return {
+          actions: issuesAtLine.map(issue => ({
+            title: `🦩 Fix: ${issue.message}`,
+            id: `flamingo-fix-${issue.code}`,
+            kind: 'quickfix',
+            command: {
+              id: 'flamingo-fix-command',
+              title: `Fix ${issue.code}`,
+              arguments: [issue]
+            },
+            diagnostics: [{
+              severity: issue.type === 'error' ? monaco.MarkerSeverity.Error :
+                        issue.type === 'warning' ? monaco.MarkerSeverity.Warning :
+                        monaco.MarkerSeverity.Info,
+              message: issue.message,
+              startLineNumber: issue.line,
+              endLineNumber: issue.line,
+              startColumn: 1,
+              endColumn: model.getLineMaxColumn(issue.line)
+            }]
+          })),
+          dispose: () => {}
+        };
       }
-    }
-  });
-}, [issues]);
+    });
+
+    // Add custom commands
+    editorRef.current?.addAction({
+      id: 'flamingo-fix-command',
+      label: 'Apply Flamingo Fix',
+      run: async (editor: any, ...args: any[]) => {
+        const [issue] = args;
+        if (!issue) return;
+
+        try {
+          const response = await fetch('http://localhost:8000/api/v1/analysis/generate-fix', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              code: editor.getValue(),
+              issue,
+              user_id: userId
+            })
+          });
+
+          if (!response.ok) throw new Error(await response.text());
+          const { fix, explanation } = await response.json();
+
+          // Apply the fix
+          const model = editor.getModel();
+          const lineContent = model.getLineContent(issue.line);
+          const newContent = lineContent.replace(/.*/, fix);
+
+          model.pushEditOperations(
+            [],
+            [{
+              range: new monaco.Range(issue.line, 1, issue.line, lineContent.length + 1),
+              text: newContent
+            }],
+            () => null
+          );
+
+          // Show success notification
+          editorRef.current?.trigger('', 'showQuickFix', {
+            message: 'Fix applied successfully!',
+            type: 'success'
+          });
+
+        } catch (error) {
+          console.error('Fix failed:', error);
+          editorRef.current?.trigger('', 'showQuickFix', {
+            message: `Fix failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            type: 'error'
+          });
+        }
+      }
+    });
+
     updateDecorations();
   }, [issues]);
 
@@ -272,6 +335,7 @@ useEffect(() => {
         language="python"
         value={code}
         onMount={handleEditorMount}
+        onChange={handleEditorChange}
         options={{
           minimap: { enabled: true },
           glyphMargin: true,
@@ -287,6 +351,15 @@ useEffect(() => {
           contextmenu: true
         }}
       />
+
+      
+
+      {/* Optional: show analyzing indicator */}
+      {isAnalyzing && (
+        <div className="absolute top-10 right-4 z-50 bg-pink-600 text-white px-3 py-1 rounded shadow">
+          Analyzing...
+        </div>
+      )}
 
       {/* Fix Popup */}
       {showFixPopup && hoveredIssue && (

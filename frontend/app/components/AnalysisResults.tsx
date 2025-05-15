@@ -25,6 +25,7 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
   const [showFixPopup, setShowFixPopup] = useState<{ visible: boolean; fix?: string; explanation?: string; issue?: Issue }>({ 
     visible: false 
   });
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // Initialize with all issues
   useEffect(() => {
@@ -207,9 +208,10 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
   };
   
   const handleCodeChange = async (newContent: string) => {
-    if (!activeFile) return;
+    if (!activeFile || isAnalyzing) return;
   
     try {
+      setIsAnalyzing(true);
       const response = await fetch('http://localhost:8000/api/v1/analysis/analyze-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -222,29 +224,48 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
         })
       });
   
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Analysis failed');
+      }
   
       const data = await response.json();
-      const issues = [
-        ...(data.main_analysis?.issues || []),
-        ...(data.complexity_analysis?.issues || []),
-        ...(data.security_scan?.issues || [])
-      ];
       
-      setIssuesWithExplanations(prev => [
-        ...prev.filter(i => i.file !== activeFile.split('/').pop()),
-        ...issues.map((issue: any) => ({
-          ...issue,
-          file: activeFile,
-          flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
-          url: issue.url || ''
-        }))
-      ]);
-      
-      setFileContent(newContent);
+      // Only update if we got valid data
+      if (data && (data.main_analysis || data.complexity_analysis || data.security_scan)) {
+        setIssuesWithExplanations(prev => {
+          const filtered = prev.filter(i => i.file !== activeFile);
+          const newIssues = [
+            ...(data.main_analysis?.issues?.map((issue: any) => ({
+              ...issue,
+              file: activeFile,
+              flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
+              url: issue.url || ''
+            })) || []),
+            ...(data.complexity_analysis?.issues?.map((issue: any) => ({
+              ...issue,
+              file: activeFile,
+              flamingo_message: issue.flamingo_message || `🦩 Complexity: ${issue.message}`,
+              url: issue.url || ''
+            })) || []),
+            ...(data.security_scan?.issues?.map((issue: any) => ({
+              ...issue,
+              file: activeFile,
+              flamingo_message: issue.flamingo_message || `🦩 Security: ${issue.message}`,
+              url: issue.url || ''
+            })) || [])
+          ];
+          return [...filtered, ...newIssues];
+        });
+      }
   
+      setFileContent(newContent);
     } catch (error) {
       console.error('Real-time analysis failed:', error);
+      // Show error but keep existing issues
+      setIssuesWithExplanations(prev => prev);
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 

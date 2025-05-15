@@ -1,11 +1,14 @@
 from app.routers import analysis, files
 from fastapi import FastAPI
 import asyncio
+import logging
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import feedback_router
 from .routers import feedback_router, analysis, files
 from app.routers.explanation_router import router as explanation_router
 from fastapi import FastAPI
+
+logger = logging.getLogger("uvicorn.error")
 
 
 app = FastAPI(
@@ -17,7 +20,12 @@ app = FastAPI(
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    await analysis.cleanup_temp_dirs()
+    try:
+        await asyncio.wait_for(analysis.cleanup_temp_dirs(), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.error("Timeout during cleanup")
+    except Exception as e:
+        logger.error(f"Cleanup error: {e}")
 
 # Add CORS middleware
 app.add_middleware(

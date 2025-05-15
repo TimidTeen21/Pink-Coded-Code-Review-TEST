@@ -495,36 +495,62 @@ async def analyze_code(
     session_id: str = Body(...),
     temp_dir: str = Body(None)
 ):
-    """Real-time code analysis endpoint"""
     try:
-        # Save to the original location if possible
+        # Basic validation
+        if not code.strip():
+            return {
+                "main_analysis": {"issues": []},
+                "complexity_analysis": {"issues": []},
+                "security_scan": {"issues": []}
+            }
+
+        # Save to the original location
         if temp_dir:
-            file_location = Path(temp_dir) / file_path.split('/')[-1]
+            file_location = Path(temp_dir) / file_path
         elif session_id in ACTIVE_SESSIONS:
-            file_location = Path(ACTIVE_SESSIONS[session_id]) / file_path.split('/')[-1]
+            file_location = Path(ACTIVE_SESSIONS[session_id]) / file_path
         else:
             file_location = Path(tempfile.mkdtemp()) / "temp_analysis.py"
         
         file_location.write_text(code)
         
-        # Run analysis on the entire project directory
-        analysis_dir = file_location.parent if (temp_dir or session_id in ACTIVE_SESSIONS) else file_location.parent
-        result = await run_linter_analysis(analysis_dir)
-
-        # Ensure issues is always a list
-        if 'main_analysis' in result and not isinstance(result['main_analysis'].get('issues', []), list):
-            result['main_analysis']['issues'] = []
-        if 'complexity_analysis' in result and not isinstance(result['complexity_analysis'].get('issues', []), list):
-            result['complexity_analysis']['issues'] = []
-        if 'security_scan' in result and not isinstance(result['security_scan'].get('issues', []), list):
-            result['security_scan']['issues'] = []
+        # Get the full analysis results from session
+        if session_id in ACTIVE_ANALYSES:
+            result = ACTIVE_ANALYSES[session_id]
+            
+            # Update just this file's issues in the results
+            file_result = await run_single_linter(Linter.RUFF, file_location.parent)
+            file_issues = file_result.get("issues", [])
+            
+            # Update the main analysis issues
+            if result.get("main_analysis"):
+                # Remove old issues for this file
+                result["main_analysis"]["issues"] = [
+                    issue for issue in result["main_analysis"]["issues"] 
+                    if issue["file"] != file_path
+                ]
+                # Add new issues
+                result["main_analysis"]["issues"].extend(file_issues)
+            
+            return result
         
-        # Return all issues, not just from the edited file
-        return result
+        # If no session, just return current file analysis
+        file_result = await run_single_linter(Linter.RUFF, file_location.parent)
+        return {
+            "main_analysis": {
+                "success": True,
+                "issues": file_result.get("issues", [])
+            },
+            "complexity_analysis": {"issues": []},
+            "security_scan": {"issues": []}
+        }
         
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON in analysis request")
+        raise HTTPException(400, detail="Invalid code format")
     except Exception as e:
-        logger.error(f"Real-time analysis failed: {e}")
-        raise HTTPException(500, detail=str(e))
+        logger.error(f"Analysis error: {str(e)}")
+        raise HTTPException(500, detail="Analysis failed")
     
 @router.post("/apply-fix")
 async def apply_fix(
