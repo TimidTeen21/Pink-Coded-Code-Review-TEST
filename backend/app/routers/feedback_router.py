@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
 import logging
+from app.models.user_profile import UserInDB
 
 # Configure logger
 logger = logging.getLogger("feedback_logger")

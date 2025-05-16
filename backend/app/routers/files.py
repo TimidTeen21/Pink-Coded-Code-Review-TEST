@@ -6,6 +6,7 @@ from typing import Optional
 import tempfile
 import os
 from app.routers.analysis import router as analysis_router
+from app.models.user_profile import UserInDB
 
 ACTIVE_SESSIONS = analysis_router.ACTIVE_SESSIONS
 ACTIVE_ANALYSES = analysis_router.ACTIVE_ANALYSES 

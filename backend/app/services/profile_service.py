@@ -3,6 +3,9 @@ from pathlib import Path
 import json
 from app.models import UserProfile
 from typing import TYPE_CHECKING
+from typing import Optional
+from app.models import UserPublic, ExperienceLevel
+from app.models.user_profile import UserInDB
 
 
 if TYPE_CHECKING:
@@ -14,36 +17,31 @@ class ProfileService:
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(exist_ok=True)
     
-    def get_profile(self, user_id: str) -> UserProfile:
+    def get_profile(self, user_id: str) -> Optional[UserInDB]:
         profile_path = self.storage_path / f"{user_id}.json"
         if profile_path.exists():
-            return UserProfile(**json.loads(profile_path.read_text()))
-        return UserProfile(user_id=user_id)
+            try:
+                with open(profile_path, "r") as f:
+                    data = json.load(f)
+                    return UserInDB(**data)
+            except:
+                return None
+        return None
     
-    def save_profile(self, profile: UserProfile):
-        profile_path = self.storage_path / f"{profile.user_id}.json"
-        profile_path.write_text(profile.json(indent=2))
-
-def update_level_based_on_feedback(
-    self, 
-    user_id: str,
-    was_helpful: bool,
-    issue_complexity: str
-):
-    profile = self.get_profile(user_id)
+    def save_profile(self, profile: UserInDB):
+        profile_path = self.storage_path / f"{profile.id}.json"
+        with open(profile_path, "w") as f:
+            json.dump(profile.dict(), f)
     
-    if was_helpful and issue_complexity == profile.experience_level:
-        # User understood this level - consider moving up
-        if profile.experience_level == "beginner":
-            profile.experience_level = "intermediate"
-        elif profile.experience_level == "intermediate":
-            profile.experience_level = "advanced"
+    def update_experience_level(self, user_id: str, level: ExperienceLevel):
+        profile = self.get_profile(user_id)
+        if profile:
+            profile.experience_level = level
+            self.save_profile(profile)
     
-    elif not was_helpful:
-        # Explanation was confusing - consider moving down
-        if profile.experience_level == "advanced":
-            profile.experience_level = "intermediate"
-        elif profile.experience_level == "intermediate":
-            profile.experience_level = "beginner"
-    
-    self.save_profile(profile)
+    def complete_quiz(self, user_id: str, score: int):
+        profile = self.get_profile(user_id)
+        if profile:
+            profile.quiz_completed = True
+            profile.quiz_score = score
+            self.save_profile(profile)

@@ -1,4 +1,4 @@
-from app.routers import analysis, files
+from app.routers import analysis, files, auth, profile_router
 from fastapi import FastAPI
 import asyncio
 import logging
@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers import feedback_router
 from .routers import feedback_router, analysis, files
 from app.routers.explanation_router import router as explanation_router
+from app.models.user_profile import UserInDB
 from fastapi import FastAPI
 
 logger = logging.getLogger("uvicorn.error")
@@ -36,11 +37,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(files.router) 
+app.include_router(files.router)
+app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(explanation_router, prefix="/api/v1")
 app.include_router(feedback_router.router, prefix="/api/v1")
-app.include_router(files.router)
+app.include_router(profile_router.router, prefix="/api/v1")
 
 
 @app.get("/health")

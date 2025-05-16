@@ -20,6 +20,7 @@ services:
 
   frontend:
     build: ./frontend
+    workdir: /app
     volumes:
       - ./frontend:/app
       - /app/node_modules  # Prevent overwriting node_modules inside container
@@ -31,3 +32,16 @@ services:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NODE_ENV=development  # Set the environment to development
     command: npm run dev  # Start the Next.js development server
+
+ # db:
+    #image: mongo:6.0
+    #ports:
+    #  - "27017:27017"
+    #volumes:
+     # - mongodb_data:/data/db
+    #environment:
+      #MONGO_INITDB_ROOT_USERNAME: root
+      #MONGO_INITDB_ROOT_PASSWORD: example
+
+#volumes:
+  #mongodb_data:

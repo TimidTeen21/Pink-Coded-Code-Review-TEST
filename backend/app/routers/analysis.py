@@ -1,5 +1,5 @@
 # backend/app/routers/analysis.py
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body, Depends
 import subprocess
 import uuid
 from typing import Dict, Any, List, Optional
@@ -16,6 +16,8 @@ from enum import Enum
 import os
 import atexit
 from fastapi.responses import FileResponse
+from app.models.user_profile import UserInDB
+from app.dependencies import get_current_user
 
 
 # Configure logging
@@ -369,7 +371,7 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
             "raw_stderr": str(e)
         }
 
-async def run_linter_analysis(project_path: Path) -> Dict[str, Any]:
+async def run_linter_analysis(project_path: Path, experience_level: str) -> Dict[str, Any]:
     """Run all appropriate linters for the project"""
     # Always run security scanner first
     bandit_result = await run_single_linter(Linter.BANDIT, project_path)
@@ -383,6 +385,11 @@ async def run_linter_analysis(project_path: Path) -> Dict[str, Any]:
     else:
         main_result = await run_single_linter(Linter.PYLINT, project_path)
     
+    if experience_level == "beginner":
+        # Filter out some complex issues for beginners
+        main_result["issues"] = [issue for issue in main_result.get("issues", []) 
+                               if not issue.get("code", "").startswith(("E", "F"))]
+
     # Always run complexity analysis
     radon_result = await run_single_linter(Linter.RADON, project_path)
     
@@ -408,7 +415,11 @@ async def run_linter_analysis(project_path: Path) -> Dict[str, Any]:
     }
 
     logger.info(f"Final analysis result structure: {json.dumps(result, indent=2)}")
-    return result
+    return {
+        "project_type": project_type.value,
+        "experience_level": experience_level,
+        "result": result
+    }
 
 async def cleanup_temp_dirs():
     for session_id, temp_dir in ACTIVE_SESSIONS.items():
@@ -423,7 +434,10 @@ async def cleanup_temp_dirs():
 atexit.register(cleanup_temp_dirs)
 
 @router.post("/analyze-zip")
-async def analyze_zip(zip_file: UploadFile = File(...)):
+async def analyze_zip(
+    zip_file: UploadFile = File(...),
+    current_user: UserInDB = Depends(get_current_user)
+):
     """Analyze a ZIP file containing a Python project"""
     session_id = str(uuid.uuid4())
     temp_dir = tempfile.mkdtemp(prefix=f"pink-coded-{session_id}-")
@@ -437,7 +451,7 @@ async def analyze_zip(zip_file: UploadFile = File(...)):
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(temp_dir)
         
-        result = await run_linter_analysis(Path(temp_dir))
+        result = await run_linter_analysis(Path(temp_dir), current_user.experience_level)
         ACTIVE_ANALYSES[session_id] = result  # Store full analysis results
         
         return {
