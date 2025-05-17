@@ -2,7 +2,7 @@ services:
   backend:
     build: ./backend
     volumes:
-       - ./backend:/app
+       - ./backend/app:/app/app
        - ./test_project:/code/
        - ./backend/ruff.toml:/app/ruff.toml
     ports:
@@ -11,7 +11,8 @@ services:
     environment:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
-    restart: unless-stopped
+      #- MONGO_URI=mongodb://root:example@db:27017/
+    #restart: unless-stopped
     #depends_on:
       #- db
 
@@ -24,7 +25,7 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=development
-    restart: unless-stopped
+    #restart: unless-stopped
     stdin_open: true
     tty: true
 

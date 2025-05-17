@@ -16,7 +16,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    restart: unless-stopped  # Prevents unwanted recreations
+    #restart: unless-stopped  # Prevents unwanted recreations
 
   frontend:
     build: ./frontend

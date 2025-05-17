@@ -1,5 +1,6 @@
-from .explanation_engine import ExplanationEngine
+# backend/app/services/__init__.py
 from .profile_service import ProfileService
-from .parse_linter import Issue, LinterType, IssueSeverity
+from .explanation_engine import ExplanationEngine
+from .deepseek_client import DeepSeekClient
 
-__all__ = ["ExplanationEngine", "ProfileService", "Issue", "LinterType", "IssueSeverity"]
+__all__ = ["ProfileService", "ExplanationEngine", "DeepSeekClient"]

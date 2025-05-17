@@ -1,6 +1,7 @@
 # backend/app/routers/explanation_router.py
 from fastapi import APIRouter, Query, HTTPException, Depends
 from app.models import Issue
+from app.models.user_profile import UserInDB
 from app.dependencies import get_explanation_engine
 
 router = APIRouter(

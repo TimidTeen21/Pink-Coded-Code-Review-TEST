@@ -1,3 +1,4 @@
+# filepath: c:\Users\Admin\Pink Coded\Pink-Coded-Code-Review\backend\app\routers\auth.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt

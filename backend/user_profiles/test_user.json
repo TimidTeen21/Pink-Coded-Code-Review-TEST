@@ -1,9 +1,0 @@
-{
-  "user_id": "test_user",
-  "experience_level": "intermediate",
-  "known_concepts": [],
-  "weak_areas": [],
-  "seen_issues": {
-    "E501": 2
-  }
-}

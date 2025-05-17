@@ -1,16 +1,14 @@
-from app.routers import analysis, files, auth, profile_router
+# backend/app/main.py
 from fastapi import FastAPI
-import asyncio
 import logging
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import feedback_router
-from .routers import feedback_router, analysis, files
+from app.routers import auth, profile_router, analysis, files, feedback_router
 from app.routers.explanation_router import router as explanation_router
-from app.models.user_profile import UserInDB
-from fastapi import FastAPI
+import asyncio
+
+
 
 logger = logging.getLogger("uvicorn.error")
-
 
 app = FastAPI(
     title="Pink Coded",
@@ -27,6 +25,7 @@ async def shutdown_event():
         logger.error("Timeout during cleanup")
     except Exception as e:
         logger.error(f"Cleanup error: {e}")
+
 
 # Add CORS middleware
 app.add_middleware(
@@ -49,3 +48,6 @@ app.include_router(profile_router.router, prefix="/api/v1")
 async def health_check():
     return {"status": "healthy"}
 
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

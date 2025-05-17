@@ -17,7 +17,7 @@ import os
 import atexit
 from fastapi.responses import FileResponse
 from app.models.user_profile import UserInDB
-from app.dependencies import get_current_user
+from app.routers.auth import get_current_user
 
 
 # Configure logging

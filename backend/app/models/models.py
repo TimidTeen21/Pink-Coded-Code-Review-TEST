@@ -1,8 +1,9 @@
 # backend/app/models.py
 from pydantic import BaseModel
 from typing import Dict, Set, Literal
+from app.models.user_profile import ExperienceLevel
 
-ExperienceLevel = Literal["beginner", "intermediate", "advanced"]
+
 
 class UserProfile(BaseModel):
     user_id: str  # Can be auth token or session ID
