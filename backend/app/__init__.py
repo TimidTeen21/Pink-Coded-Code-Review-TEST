@@ -9,7 +9,6 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
-
 def configure_routers():
     """Configure all routers"""
     app.include_router(auth.router)

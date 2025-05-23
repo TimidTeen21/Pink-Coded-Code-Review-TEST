@@ -1,6 +1,6 @@
 # backend/app/models.py
 from pydantic import BaseModel
-from typing import Dict, Set, Literal, Optional
+from typing import Dict, Set, Literal
 
 ExperienceLevel = Literal["beginner", "intermediate", "advanced"]
 

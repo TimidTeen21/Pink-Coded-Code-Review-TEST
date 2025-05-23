@@ -1,3 +1,4 @@
+// frontend/app/profile/page.tsx
 import { useState, useRef, ChangeEvent, useEffect } from 'react'
 import { FiUpload, FiCode, FiCheckCircle, FiFolder, FiFile, FiX, FiUser, FiAward,
 FiLogIn, FiUserPlus, FiLoader } from 'react-icons/fi'

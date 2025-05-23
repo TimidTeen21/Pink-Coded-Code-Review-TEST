@@ -11,4 +11,5 @@ COPY . .
 
 EXPOSE 3000
 
-CMD ["npm", "run", "dev"]
+# Use standard Next.js compiler instead of Turbopack in Docker
+CMD ["npm", "run", "dev-no-turbo"]

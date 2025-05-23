@@ -1,17 +1,23 @@
-# filepath: c:\Users\Admin\Pink Coded\Pink-Coded-Code-Review\backend\app\models\__init__.py
+# backend/app/models/__init__.py
 from .user_profile import (
+    UserProfile,
+    UserInDB,
     UserBase,
     UserCreate,
-    UserInDB,
     UserPublic,
+    UserUpdate,
     ExperienceLevel
 )
+from .issue import Issue, IssueType
 
-# This makes these classes available when importing from app.models
 __all__ = [
+    'UserProfile',
+    'UserInDB',
     'UserBase',
     'UserCreate',
-    'UserInDB', 
     'UserPublic',
+    'UserUpdate',
     'ExperienceLevel',
+    'Issue',
+    'IssueType'
 ]

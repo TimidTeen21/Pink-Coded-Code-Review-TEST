@@ -1,6 +1,6 @@
 # backend/app/models.py
 from pydantic import BaseModel
-from typing import Dict, Set, Literal
+from typing import Dict, Set
 from app.models.user_profile import ExperienceLevel
 
 

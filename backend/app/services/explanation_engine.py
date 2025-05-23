@@ -5,7 +5,8 @@ import json
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
-from app.models import UserProfile, Issue
+from app.models.user_profile import UserProfile
+from app.models import Issue
 import asyncio
 from datetime import datetime
 import time

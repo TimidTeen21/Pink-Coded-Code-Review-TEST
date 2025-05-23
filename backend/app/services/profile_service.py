@@ -1,10 +1,9 @@
 # backend/app/services/profile_service.py
 from pathlib import Path
 import json
-from app.models import UserProfile
 from typing import TYPE_CHECKING
 from typing import Optional
-from app.models import UserPublic, ExperienceLevel
+from app.models import ExperienceLevel
 from app.models.user_profile import UserInDB
 
 

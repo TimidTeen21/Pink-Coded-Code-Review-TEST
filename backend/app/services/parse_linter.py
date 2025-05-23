@@ -2,7 +2,6 @@ from typing import List, Dict, Any, Optional
 import json
 from pathlib import Path
 from enum import Enum
-from app.models import Issue
 from pydantic import BaseModel
 
 class Issue(BaseModel):

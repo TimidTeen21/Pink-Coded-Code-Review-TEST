@@ -1,9 +1,10 @@
 # filepath: c:\Users\Admin\Pink Coded\Pink-Coded-Code-Review\backend\app\routers\profile_router.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from app.models.user_profile import ExperienceLevel
 from app.services.profile_service import ProfileService
 from app.routers.auth import get_current_user
 from app.models.user_profile import UserInDB
+
 
 router = APIRouter(prefix="/api/v1/profile", tags=["profile"])
 

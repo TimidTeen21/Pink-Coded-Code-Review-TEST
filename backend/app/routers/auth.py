@@ -6,8 +6,6 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from typing import Optional
 import os
-from app.models.user_profile import UserInDB
-
 from app.models.user_profile import UserInDB, UserCreate, UserPublic
 from app.services.profile_service import ProfileService
 
