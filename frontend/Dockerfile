@@ -1,7 +1,10 @@
 #frontend/Dockerfile
 FROM node:18-slim
 
-WORKDIR /code
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl
+
+WORKDIR /app
 
 COPY package*.json ./
 
@@ -11,5 +14,7 @@ COPY . .
 
 EXPOSE 3000
 
+ENV NODE_ENV=development
+
 # Use standard Next.js compiler instead of Turbopack in Docker
-CMD ["npm", "run", "dev-no-turbo"]
+CMD ["npm", "run", "dev"]

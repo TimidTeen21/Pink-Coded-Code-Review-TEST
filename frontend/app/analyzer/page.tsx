@@ -5,6 +5,7 @@ FiLogIn, FiUserPlus, FiLoader } from 'react-icons/fi'
 import { AnalysisResults } from '@/components'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { ExperienceLevel, AnalysisResult } from '@/types'
+import { useRouter } from 'next/navigation'
 
 
 export default function Analyzer() {
@@ -16,6 +17,7 @@ export default function Analyzer() {
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>('intermediate')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault()
@@ -103,6 +105,16 @@ export default function Analyzer() {
       setIsAnalyzing(false);
     }
   };
+
+      const router = useRouter();
+
+      useEffect(() => {
+        const token = localStorage.getItem('token');
+        if (!token) {
+         router.push('/auth/login');
+      }
+      }, [router]);
+
   
   return (
     <main className="min-h-screen bg-gradient-to-b from-dark-triangle to-gray-900">

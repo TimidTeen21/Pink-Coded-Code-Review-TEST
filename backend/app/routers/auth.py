@@ -9,7 +9,7 @@ import os
 from app.models.user_profile import UserInDB, UserCreate, UserPublic
 from app.services.profile_service import ProfileService
 
-router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Security setup
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")

@@ -1,28 +1,33 @@
 {
   "name": "frontend",
   "version": "0.1.0",
+  "type": "module",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
     "dev-no-turbo": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "troubleshoot": "ts-node troubleshoot.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "axios": "^1.9.0",
     "lodash": "^4.17.21",
     "motion": "^12.11.4",
     "next": "15.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-icons": "^5.5.0"
+    "react-icons": "^5.5.0",
+    "ts-node": "^10.9.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
+    "@types/axios": "^0.9.36",
     "@types/lodash": "^4.17.16",
-    "@types/node": "^20",
+    "@types/node": "^20.17.50",
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
     "@typescript-eslint/eslint-plugin": "^8.30.1",
@@ -32,6 +37,6 @@
     "eslint-config-next": "15.3.0",
     "postcss": "^8.0.0",
     "tailwindcss": "^3.0.0",
-    "typescript": "^5"
+    "typescript": "^5.8.3"
   }
 }

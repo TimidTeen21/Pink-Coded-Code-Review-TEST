@@ -14,30 +14,30 @@ export default function LoginForm({ onSuccess }: { onSuccess: (token: string) =>
     setError('')
     
     try {
-      const response = await fetch('http://localhost:8000/api/v1/auth/login', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}//api/v1/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({
           username: email,
-          password,
+          password: password,
           grant_type: 'password'
         })
-      })
+      });
 
-      if (!response.ok) {
-        throw new Error('Invalid credentials')
-      }
-
-      const { access_token } = await response.json()
-      onSuccess(access_token)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
-    } finally {
-      setLoading(false)
+    if (!response.ok) {
+      throw new Error(await response.text());
     }
+
+    const { access_token } = await response.json();
+    onSuccess(access_token);
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Login failed');
+  } finally {
+    setLoading(false);
   }
+}
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
