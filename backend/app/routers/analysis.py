@@ -434,8 +434,8 @@ atexit.register(cleanup_temp_dirs)
 
 @router.post("/analyze-zip")
 async def analyze_zip(
-    zip_file: UploadFile = File(...),
-    current_user: UserInDB = Depends(get_current_user)
+    zip_file: UploadFile = File(...)
+    # Removed: current_user: UserInDB = Depends(get_current_user)
 ):
     """Analyze a ZIP file containing a Python project"""
     session_id = str(uuid.uuid4())
@@ -443,6 +443,9 @@ async def analyze_zip(
     ACTIVE_SESSIONS[session_id] = temp_dir
     
     try:
+        # Use a default experience level since we removed user auth
+        experience_level = "intermediate"  
+        
         zip_path = Path(temp_dir) / "upload.zip"
         with zip_path.open("wb") as buffer:
             shutil.copyfileobj(zip_file.file, buffer)
@@ -450,8 +453,8 @@ async def analyze_zip(
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(temp_dir)
         
-        result = await run_linter_analysis(Path(temp_dir), current_user.experience_level)
-        ACTIVE_ANALYSES[session_id] = result  # Store full analysis results
+        result = await run_linter_analysis(Path(temp_dir), experience_level)
+        ACTIVE_ANALYSES[session_id] = result
         
         return {
             **result,

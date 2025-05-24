@@ -1,3 +1,4 @@
+//app/components/AnalysisResults.tsx
 import React, { useState, useEffect } from 'react';
 import { 
   FiAlertTriangle, FiInfo, FiCheckCircle, FiShield, 
@@ -27,30 +28,39 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
   });
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
+  useEffect(() => {
+  console.log("Full result from backend:", result);
+  console.log("Main analysis issues:", result?.main_analysis?.issues);
+  console.log("All combined issues:", [
+    ...(result?.main_analysis?.issues || []),
+    ...(result?.complexity_analysis?.issues || []),
+    ...(result?.security_scan?.issues || [])
+  ]);
+}, [result]);
   // Initialize with all issues
   useEffect(() => {
     if (result) {
       // Normalize all issues to include required fields
-      const allIssues = [
-        ...(result.main_analysis?.issues?.map(issue => ({
-          ...issue,
-          flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
-          url: issue.url || '',
-          explanation: issue.explanation ?? undefined
-        })) || []),
-        ...(result.complexity_analysis?.issues?.map(issue => ({
-          ...issue,
-          flamingo_message: issue.flamingo_message || `🦩 Complexity: ${issue.message}`,
-          url: issue.url || '',
-          explanation: issue.explanation ?? undefined
-        })) || []),
-        ...(result.security_scan?.issues?.map(issue => ({
-          ...issue,
-          flamingo_message: issue.flamingo_message || `🦩 Security: ${issue.message}`,
-          url: issue.url || '',
-          explanation: issue.explanation ?? undefined
-        })) || [])
-      ];
+      // Replace the issues collection code with:
+const allIssues = [
+  ...(result?.main_analysis?.issues?.map((issue: any) => ({
+    ...issue,
+    flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
+    url: issue.url || ''
+  })) || []),
+  ...(result?.complexity_analysis?.issues?.map((issue: any) => ({
+    ...issue,
+    flamingo_message: issue.flamingo_message || `🦩 Complexity: ${issue.message}`,
+    url: issue.url || '',
+    type: issue.type || 'complexity'
+  })) || []),
+  ...(result?.security_scan?.issues?.map((issue: any) => ({
+    ...issue,
+    flamingo_message: issue.flamingo_message || `🦩 Security: ${issue.message}`,
+    url: issue.url || '',
+    type: issue.type || 'security'
+  })) || [])
+];
 
       setIssuesWithExplanations(allIssues);
       

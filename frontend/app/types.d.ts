@@ -31,36 +31,22 @@ export interface AnalysisResult {
   main_analysis?: {
     issues?: Issue[];
     error?: string;
-    success?: boolean;
-    raw?: {
-      stderr?: string;
-    };
+    raw?: any;
   };
   complexity_analysis?: {
     issues?: Issue[];
     error?: string;
-    success?: boolean;
-    
+    raw?: any;
   };
   security_scan?: {
     issues?: Issue[];
     error?: string;
-    success?: boolean;
+    raw?: any;
   };
-
+  project_type?: string;
+  linter?: string;
   session_id?: string;
   temp_dir?: string;
-  
-  project_type: string;
-  linter: string;
-  temp_dir?: string;
-  session_id?: string;
-  complexity: string;
-   security_scan: {
-        success: boolean;
-        issues: Issue[];
-        error?: string;
-  };
 }
 
 type OnFixType = (updatedIssues: Issue[]) => void;
@@ -90,4 +76,3 @@ export interface UserProfile {
   learnedConcepts: string[];
   weakAreas: string[];
 }
-

@@ -1,8 +1,9 @@
 // frontend/app/dashboard/components/RulesQualityGates.tsx
 import { FiShield, FiCheckCircle, FiAlertTriangle, FiInfo, FiList } from 'react-icons/fi';
+import { useState } from 'react';
 
 export default function RulesQualityGates() {
-  const rules = [
+  const [ruleGroups, setRuleGroups] = useState([
     {
       category: 'Code Style',
       enabled: true,
@@ -29,7 +30,7 @@ export default function RulesQualityGates() {
         { name: 'Memory Usage', severity: 'medium', description: 'Flag excessive memory consumption patterns' }
       ]
     }
-  ];
+  ]);
 
   const qualityGates = [
     { 
@@ -52,6 +53,16 @@ export default function RulesQualityGates() {
     }
   ];
 
+  const toggleRuleGroup = (category: string) => {
+    setRuleGroups(prevGroups =>
+      prevGroups.map(group =>
+        group.category === category
+          ? { ...group, enabled: !group.enabled }
+          : group
+      )
+    );
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-center mb-6">
@@ -71,29 +82,36 @@ export default function RulesQualityGates() {
           </h3>
           
           <div className="space-y-6">
-            {rules.map((group) => (
+            {ruleGroups.map((group) => (
               <div key={group.category} className="border-b border-gray-700 pb-6 last:border-0 last:pb-0">
                 <div className="flex justify-between items-center mb-4">
                   <h4 className="font-medium">{group.category}</h4>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={group.enabled} />
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer" 
+                      checked={group.enabled}
+                      onChange={() => toggleRuleGroup(group.category)}
+                    />
                     <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-600"></div>
                   </label>
                 </div>
                 
-                <div className="space-y-3">
-                  {group.rules.map((rule) => (
-                    <div key={rule.name} className="flex items-start gap-3 p-3 bg-gray-700/50 rounded-lg">
-                      <div className={`pt-1 ${rule.severity === 'critical' ? 'text-red-400' : rule.severity === 'high' ? 'text-orange-400' : rule.severity === 'warning' ? 'text-yellow-400' : 'text-blue-400'}`}>
-                        {rule.severity === 'critical' || rule.severity === 'high' ? <FiAlertTriangle /> : <FiCheckCircle />}
+                {group.enabled && (
+                  <div className="space-y-3">
+                    {group.rules.map((rule) => (
+                      <div key={rule.name} className="flex items-start gap-3 p-3 bg-gray-700/50 rounded-lg">
+                        <div className={`pt-1 ${rule.severity === 'critical' ? 'text-red-400' : rule.severity === 'high' ? 'text-orange-400' : rule.severity === 'warning' ? 'text-yellow-400' : 'text-blue-400'}`}>
+                          {rule.severity === 'critical' || rule.severity === 'high' ? <FiAlertTriangle /> : <FiCheckCircle />}
+                        </div>
+                        <div>
+                          <p className="font-medium">{rule.name}</p>
+                          <p className="text-sm text-gray-400">{rule.description}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium">{rule.name}</p>
-                        <p className="text-sm text-gray-400">{rule.description}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

@@ -29,7 +29,7 @@ app.add_middleware(
 # Ensure this comes after CORS middleware
 app.include_router(auth.router)
 app.include_router(files.router, prefix="/api/v1")
-app.include_router(analysis.router, prefix="/api/v1")
+app.include_router(analysis.router)
 app.include_router(explanation_router, prefix="/api/v1")
 app.include_router(feedback_router.router, prefix="/api/v1")
 app.include_router(profile_router.router, prefix="/api/v1")

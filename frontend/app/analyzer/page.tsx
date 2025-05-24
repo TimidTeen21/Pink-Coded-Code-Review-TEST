@@ -1,4 +1,4 @@
-// frontend/app/profile/page.tsx
+// frontend/app/analyzer/page.tsx
 import { useState, useRef, ChangeEvent, useEffect } from 'react'
 import { FiUpload, FiCode, FiCheckCircle, FiFolder, FiFile, FiX, FiUser, FiAward,
 FiLogIn, FiUserPlus, FiLoader } from 'react-icons/fi'
@@ -68,52 +68,48 @@ export default function Analyzer() {
   }
 
   const handleZipUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsAnalyzing(true);
-    setError('');
-    setResults(null);
+  e.preventDefault();
+  setIsAnalyzing(true);
+  setError('');
+  setResults(null);
 
-    if (!selectedZip) {
-      setError('Please select a ZIP file first');
-      setIsAnalyzing(false);
-      return;
+  if (!selectedZip) {
+    setError('Please select a ZIP file first');
+    setIsAnalyzing(false);
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('zip_file', selectedZip);
+
+  try {
+    const response = await fetch('http://localhost:8000/api/v1/analysis/analyze-zip', {
+      method: 'POST',
+      body: formData
+      // No auth headers needed now
+    });
+
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || `Analysis failed with status: ${response.status}`);
     }
 
-    const formData = new FormData();
-    formData.append('zip_file', selectedZip);
-
-    try {
-      const response = await fetch('http://localhost:8000/api/v1/analysis/analyze-zip', {
-        method: 'POST',
-        body: formData
-      });
-  
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Analysis failed with status: ${response.status}`);
-      }
-  
-      const data = await response.json();
-      setResults(data);
-      
-      // Store the session ID in state
-      setSessionId(data.session_id);
-    } catch (err) {
-      console.error('Analysis error:', err);
-      setError(err instanceof Error ? err.message : 'Upload failed');
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
+    console.log("Raw response:", response); // Add this
+    const data = await response.json();
+    console.log("Parsed data:", data); // Add this
+    setResults(data);
+    setSessionId(data.session_id);
+  } catch (err) {
+    console.error('Analysis error:', err);
+    setError(err instanceof Error ? err.message : 'Upload failed');
+  } finally {
+    setIsAnalyzing(false);
+  }
+};
       const router = useRouter();
 
-      useEffect(() => {
-        const token = localStorage.getItem('token');
-        if (!token) {
-         router.push('/auth/login');
-      }
-      }, [router]);
+
 
   
   return (
