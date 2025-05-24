@@ -9,6 +9,7 @@ import {
 import { MdAutoFixHigh } from 'react-icons/md';
 import { Issue, AnalysisResult } from '@/types';
 import { CodeEditor } from '@/components/CodeEditor/CodeEditor';
+import SlackShare from './SlackShare';
 
 interface AnalysisResultsProps {
   result?: AnalysisResult;
@@ -27,41 +28,59 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
     visible: false 
   });
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [fileLoadError, setFileLoadError] = useState<string | null>(null);
+  
+  const getIssues = () => {
+    if (!result) return [];
+    
+    // Check for nested structure first
+    if (result.result) {
+      return [
+        ...(result.result.main_analysis?.issues?.map(issue => ({
+          ...issue,
+          flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
+          url: issue.url || ''
+        })) || []),
+        ...(result.result.complexity_analysis?.issues?.map(issue => ({
+          ...issue,
+          flamingo_message: issue.flamingo_message || `🦩 Complexity: ${issue.message}`,
+          url: issue.url || '',
+          type: issue.type || 'complexity'
+        })) || []),
+        ...(result.result.security_scan?.issues?.map(issue => ({
+          ...issue,
+          flamingo_message: issue.flamingo_message || `🦩 Security: ${issue.message}`,
+          url: issue.url || '',
+          type: issue.type || 'security'
+        })) || [])
+      ];
+    }
+    
+    // Fall back to flattened structure
+    return [
+      ...(result.main_analysis?.issues?.map(issue => ({
+        ...issue,
+        flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
+        url: issue.url || ''
+      })) || []),
+      ...(result.complexity_analysis?.issues?.map(issue => ({
+        ...issue,
+        flamingo_message: issue.flamingo_message || `🦩 Complexity: ${issue.message}`,
+        url: issue.url || '',
+        type: issue.type || 'complexity'
+      })) || []),
+      ...(result.security_scan?.issues?.map(issue => ({
+        ...issue,
+        flamingo_message: issue.flamingo_message || `🦩 Security: ${issue.message}`,
+        url: issue.url || '',
+        type: issue.type || 'security'
+      })) || [])
+    ];
+  };
 
-  useEffect(() => {
-  console.log("Full result from backend:", result);
-  console.log("Main analysis issues:", result?.main_analysis?.issues);
-  console.log("All combined issues:", [
-    ...(result?.main_analysis?.issues || []),
-    ...(result?.complexity_analysis?.issues || []),
-    ...(result?.security_scan?.issues || [])
-  ]);
-}, [result]);
-  // Initialize with all issues
   useEffect(() => {
     if (result) {
-      // Normalize all issues to include required fields
-      // Replace the issues collection code with:
-const allIssues = [
-  ...(result?.main_analysis?.issues?.map((issue: any) => ({
-    ...issue,
-    flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
-    url: issue.url || ''
-  })) || []),
-  ...(result?.complexity_analysis?.issues?.map((issue: any) => ({
-    ...issue,
-    flamingo_message: issue.flamingo_message || `🦩 Complexity: ${issue.message}`,
-    url: issue.url || '',
-    type: issue.type || 'complexity'
-  })) || []),
-  ...(result?.security_scan?.issues?.map((issue: any) => ({
-    ...issue,
-    flamingo_message: issue.flamingo_message || `🦩 Security: ${issue.message}`,
-    url: issue.url || '',
-    type: issue.type || 'security'
-  })) || [])
-];
-
+      const allIssues = getIssues();
       setIssuesWithExplanations(allIssues);
       
       const initialFeedbackStates = allIssues.reduce((acc, issue) => {
@@ -75,29 +94,38 @@ const allIssues = [
   }, [result]);
 
   const fetchFileContent = async (filePath: string) => {
-    try {
-      const params = new URLSearchParams({
-        path: filePath,
-        session_id: result?.session_id || '',
-        ...(result?.temp_dir && { temp_dir: result.temp_dir })
-      });
+  try {
+    // Extract just the filename if path contains folders
+    const filename = filePath.split('/').pop() || filePath;
+    
+    const params = new URLSearchParams({
+      path: filename,  // Send just the filename
+      session_id: result?.session_id || '',
+      ...(result?.temp_dir && { temp_dir: result.temp_dir })
+    });
 
-      const response = await fetch(
-        `http://localhost:8000/api/v1/files?${params.toString()}`
+    const response = await fetch(
+      `http://localhost:8000/api/v1/files?${params.toString()}`
+    );
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText.includes('detail') ? 
+        JSON.parse(errorText).detail : 
+        `File not found: ${filename}`
       );
-      
-      if (!response.ok) throw new Error(await response.text());
-      
-      const { content } = await response.json();
-      setFileContent(content);
-      setActiveFile(filePath);
-      
-    } catch (error) {
-      console.error('Failed to load file:', error);
-      setFileContent(`# Error loading ${filePath}\n# ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setActiveFile(filePath);
     }
-  };
+    
+    const { content } = await response.json();
+    setFileContent(content);
+    setActiveFile(filePath);
+    
+  } catch (error) {
+    console.error('Failed to load file:', error);
+    setFileContent(`# Error loading file\n# ${error instanceof Error ? error.message : 'Unknown error'}`);
+    setActiveFile(filePath);
+  }
+};
 
   const toggleExpand = (issue: Issue) => {
     const issueId = `${issue.file}-${issue.line}-${issue.code}`;
@@ -416,9 +444,9 @@ const allIssues = [
             <FiAlertTriangle className="h-4 w-4" />
             <span>Error: {result.main_analysis?.error}</span>
           </div>
-          {result.main_analysis?.raw?.stderr && (
+          {result.main_analysis?.raw_stderr && (
             <pre className="mt-2 text-xs text-red-300 overflow-auto max-h-40">
-              {result.main_analysis.raw.stderr}
+              {result.main_analysis.raw_stderr}
             </pre>
           )}
         </div>
@@ -711,6 +739,14 @@ const allIssues = [
           </div>
         </div>
       )}
+
+      {/* Slack Share Component */}
+
+  <SlackShare 
+    codeSnippet={''} 
+    analysisResult={''}
+    className="mt-4" // optional additional styling
+  />
     </div>
   );
 };

@@ -433,35 +433,36 @@ async def cleanup_temp_dirs():
 atexit.register(cleanup_temp_dirs)
 
 @router.post("/analyze-zip")
-async def analyze_zip(
-    zip_file: UploadFile = File(...)
-    # Removed: current_user: UserInDB = Depends(get_current_user)
-):
-    """Analyze a ZIP file containing a Python project"""
+async def analyze_zip(zip_file: UploadFile = File(...)):
     session_id = str(uuid.uuid4())
     temp_dir = tempfile.mkdtemp(prefix=f"pink-coded-{session_id}-")
     ACTIVE_SESSIONS[session_id] = temp_dir
     
     try:
-        # Use a default experience level since we removed user auth
-        experience_level = "intermediate"  
-        
         zip_path = Path(temp_dir) / "upload.zip"
         with zip_path.open("wb") as buffer:
             shutil.copyfileobj(zip_file.file, buffer)
         
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(temp_dir)
+        # Create upload subdirectory
+        upload_dir = Path(temp_dir) / "upload"
+        upload_dir.mkdir(exist_ok=True)
         
-        result = await run_linter_analysis(Path(temp_dir), experience_level)
+        # Extract to upload subdirectory
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(upload_dir)
+        
+        # Set project path to upload directory
+        project_path = upload_dir
+        
+        experience_level = "beginner"
+        result = await run_linter_analysis(project_path, experience_level)
         ACTIVE_ANALYSES[session_id] = result
         
         return {
             **result,
             "session_id": session_id,
-            "temp_dir": temp_dir
+            "temp_dir": str(temp_dir)
         }
-        
     except Exception as e:
         logger.error(f"ZIP analysis failed: {e}")
         raise HTTPException(500, detail=str(e))

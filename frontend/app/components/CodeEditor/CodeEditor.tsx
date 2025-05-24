@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Editor, { Monaco, useMonaco } from '@monaco-editor/react';
 import type { Issue } from '@/types';
-import { FiWind, FiX, FiCheck, FiCopy } from 'react-icons/fi';
+import { FiWind, FiX, FiCheck, FiCopy, FiAlertTriangle } from 'react-icons/fi';
 
 interface CodeEditorProps {
   code: string;
@@ -26,8 +26,7 @@ export function CodeEditor({
   const [hoveredIssue, setHoveredIssue] = useState<Issue | null>(null);
   const [showFixPopup, setShowFixPopup] = useState(false);
   const [fixPosition, setFixPosition] = useState({ x: 0, y: 0 });
-
-  // Debounce and analysis state
+  const [fileError, setFileError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const debounceTimer = useRef<NodeJS.Timeout>();
 
@@ -35,8 +34,6 @@ export function CodeEditor({
     editorRef.current = editor;
     monacoRef.current = monaco;
 
-    
-    
     // Set up hover provider
     monaco.languages.registerHoverProvider('python', {
       provideHover: (model, position) => {
@@ -83,31 +80,31 @@ export function CodeEditor({
       }
     });
 
-    // Set initial error markers
     updateDecorations();
   };
 
-  // Debounced content change handler
-  const handleEditorChange = (value: string | undefined) => {
+  // In CodeEditor.tsx
+const handleEditorChange = (value: string | undefined) => {
     if (value === undefined) return;
 
-    // Clear previous timer
     if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current);
+        clearTimeout(debounceTimer.current);
     }
 
     setIsAnalyzing(true);
+    setFileError(null);
 
+    // Increase debounce time to 1000ms
     debounceTimer.current = setTimeout(async () => {
-      try {
-        await onContentChange(value);
-      } catch (error) {
-        console.error('Analysis failed:', error);
-      } finally {
-        setIsAnalyzing(false);
-      }
-    }, 500);
-  };
+        try {
+            await onContentChange(value);
+        } catch (error) {
+            setFileError(`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setIsAnalyzing(false);
+        }
+    }, 1000); // Increased from 500ms
+};
 
   const showFixAtPosition = (issue: Issue, x: number, y: number) => {
     setFixPosition({ x, y });
@@ -127,13 +124,11 @@ export function CodeEditor({
     const monaco = monacoRef.current;
     const model = editorRef.current.getModel();
     
-    // Clear old decorations
     decorationsRef.current = editorRef.current.deltaDecorations(
       decorationsRef.current,
       []
     );
     
-    // Add new decorations
     decorationsRef.current = editorRef.current.deltaDecorations(
       decorationsRef.current,
       issues.map(issue => ({
@@ -151,11 +146,7 @@ export function CodeEditor({
           },
           minimap: {
             position: monaco.editor.MinimapPosition.Gutter,
-            color: 
-              issue.type === 'error' ? '#ff4d4f' :
-              issue.type === 'warning' ? '#faad14' :
-              issue.type === 'security' ? '#9254de' :
-              '#13c2c2'
+            color: getSeverityColor(issue.type)
           },
           stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
         }
@@ -163,7 +154,6 @@ export function CodeEditor({
     );
   };
 
-  // Utility for severity color
   const getSeverityColor = (type: string) => {
     switch (type) {
       case 'error': return '#ff4d4f';
@@ -174,18 +164,15 @@ export function CodeEditor({
     }
   };
 
-  // Decorations effect
   useEffect(() => {
     if (!monacoRef.current || !editorRef.current) return;
     
-    // Clear old decorations
     const oldDecorations = [...decorationsRef.current];
     decorationsRef.current = editorRef.current.deltaDecorations(
       oldDecorations,
       []
     );
     
-    // Add new decorations if we have issues
     if (issues.length > 0) {
       const monaco = monacoRef.current;
       decorationsRef.current = editorRef.current.deltaDecorations(
@@ -208,6 +195,16 @@ export function CodeEditor({
       );
     }
   }, [issues]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (showFixPopup && !(e.target as Element).closest('.fix-popup')) {
+        setShowFixPopup(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showFixPopup]);
 
   // Register quick fixes
   useEffect(() => {
@@ -310,26 +307,33 @@ export function CodeEditor({
     updateDecorations();
   }, [issues]);
 
-  // Handle clicks outside the popup
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (showFixPopup && !(e.target as Element).closest('.fix-popup')) {
-        setShowFixPopup(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showFixPopup]);
-
   return (
     <div className="relative h-full">
+      {/* Error Display */}
+      {fileError && (
+        <div className="p-4 bg-red-900/20 border border-red-400/30 rounded-lg mb-2 flex items-center">
+          <FiAlertTriangle className="mr-2 text-red-400" />
+          <span className="text-red-300">{fileError}</span>
+          <button 
+            onClick={onClose}
+            className="ml-auto px-2 py-1 bg-gray-700 rounded text-sm"
+          >
+            Close
+          </button>
+        </div>
+      )}
+
+      {/* Editor Header */}
       <div className="flex justify-between items-center bg-gray-700 p-2">
-        <span className="text-sm font-mono">Editing: {activeFile}</span>
+        <span className="text-sm font-mono truncate max-w-[80%]" title={activeFile}>
+          Editing: {activeFile}
+        </span>
         <button onClick={onClose} className="text-gray-300 hover:text-white">
           <FiX className="h-4 w-4" />
         </button>
       </div>
       
+      {/* Monaco Editor */}
       <Editor
         height="90vh"
         language="python"
@@ -352,11 +356,10 @@ export function CodeEditor({
         }}
       />
 
-      
-
-      {/* Optional: show analyzing indicator */}
+      {/* Analyzing Indicator */}
       {isAnalyzing && (
-        <div className="absolute top-10 right-4 z-50 bg-pink-600 text-white px-3 py-1 rounded shadow">
+        <div className="absolute top-10 right-4 z-50 bg-pink-600 text-white px-3 py-1 rounded shadow flex items-center">
+          <FiWind className="animate-pulse mr-2" />
           Analyzing...
         </div>
       )}
