@@ -32,40 +32,77 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
   
 const getIssues = () => {
   if (!result) return [];
-  
-  // DEBUG: Log raw result
-  console.log("RAW RESULT STRUCTURE:", JSON.stringify(result, null, 2));
 
-  // Extract issues from ALL possible locations
-  const sources = [
-    result?.result?.main_analysis?.issues,
-    result?.result?.complexity_analysis?.issues,
-    result?.result?.security_scan?.issues,
-    result?.main_analysis?.issues,
-    result?.complexity_analysis?.issues,
-    result?.security_scan?.issues
-  ];
+  // Helper function to safely extract issues from multiple possible paths
+  const getIssuesFromPaths = (paths: string[]) => {
+    let current = result as any;
+    for (const path of paths) {
+      if (current && current[path]?.issues) {
+        return current[path].issues;
+      }
+      if (current && current[path]) {
+        current = current[path];
+      } else {
+        break;
+      }
+    }
+    return [];
+  };
 
-  // Flatten and filter out undefined/null and undefined issues
-  const rawIssues = sources.flat().filter((issue): issue is Issue => Boolean(issue));
+  // Check multiple possible paths for each linter
+  const pylintIssues = getIssuesFromPaths(['result', 'pylint', 'linter_pylint']);
+  const banditIssues = getIssuesFromPaths(['result', 'bandit', 'linter_bandit']);
+  const radonIssues = getIssuesFromPaths(['result', 'radon', 'linter_radon']);
+  const ruffIssues = getIssuesFromPaths(['result', 'ruff', 'linter_ruff']); 
+  const mainIssues = getIssuesFromPaths(['result', 'main_analysis', 'analysis']);
+  const complexityIssues = getIssuesFromPaths(['result', 'complexity_analysis']);
+  const securityIssues = getIssuesFromPaths(['result', 'security_scan']);
 
-  console.log(`FOUND ${rawIssues.length} RAW ISSUES`);
+  // Combine all issues with proper typing and fallbacks
+  const allIssues = [
+    ...mainIssues,
+    ...complexityIssues,
+    ...securityIssues,
+    ...pylintIssues,
+    ...banditIssues,
+    ...radonIssues,
+    ...ruffIssues
+  ].filter((issue): issue is Issue => Boolean(issue))
+   .map(issue => ({
+      ...issue,
+      file: issue.file || 'unknown',
+      line: issue.line || 0,
+      code: issue.code || 'NO_CODE',
+      message: issue.message || 'No message',
+      type: issue.type || (
+        issue.code?.startsWith('E') ? 'error' :
+        issue.code?.startsWith('W') ? 'warning' :
+        issue.code?.startsWith('B') ? 'security' :
+        issue.code?.includes('RADON') ? 'complexity' :
+        issue.code?.startsWith('F') ? 'error' :  // Ruff errors
+        issue.code?.startsWith('RUF') ? 'warning' :  // Ruff-specific
+        issue.code?.startsWith('PLC') ? 'error' :  // Pylint convention
+        issue.code?.startsWith('PLE') ? 'error' :  // Pylint error
+        issue.code?.startsWith('PLW') ? 'warning' :  // Pylint warning
+        issue.code?.startsWith('S') ? 'security' :  //Bandit security
+        'info'
+      ),
+      flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
+      url: issue.url || ''
+    }));
 
-  return rawIssues.map(issue => ({
-    ...issue,
-    // Ensure required fields exist
-    file: issue.file || 'unknown',
-    line: issue.line || 0,
-    code: issue.code || 'NO_CODE',
-    message: issue.message || 'No message',
-    type: issue.type || (
-      issue.code?.startsWith('E') ? 'error' :
-      issue.code?.startsWith('W') ? 'warning' : 
-      'info'
-    ),
-    flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
-    url: issue.url || ''
-  }));
+  console.log('All detected issues:', {
+    mainIssues,
+    complexityIssues,
+    securityIssues,
+    pylintIssues,
+    banditIssues,
+    radonIssues,
+    ruffIssues,
+    combined: allIssues
+  });
+
+  return allIssues;
 };
   useEffect(() => {
     if (result) {

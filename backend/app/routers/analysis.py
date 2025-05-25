@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Body, Depends
 import subprocess
 import os
+import asyncio
 import uuid
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -16,9 +17,8 @@ import zipfile
 from enum import Enum
 import atexit
 from fastapi.responses import FileResponse
-from app.models.user_profile import UserInDB
-from app.routers.auth import get_current_user
-
+from app.services.parse_linter import parse_linter_output as parse_linter_output_service
+from app.services.parse_linter import LinterType
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -57,24 +57,39 @@ class LinterConfig:
     @staticmethod
     def get_ruff_config() -> Dict[str, Any]:
         return {
-            "lint": {
-                "select": ["E", "F", "W", "B", "I", "UP", "D"],
-                "ignore": ["E501", "D203", "D212"],
-                "per-file-ignores": {
-                    "__init__.py": ["F401"],
-                    "tests/*": ["S101"]
-                }
-            }
-        }
+        "lint": {
+            "select": [
+                "E",   # Pyflakes errors
+                "F",   # Pyflakes fixes
+                "W",   # Pyflakes warnings
+                "B9",  # Bugbear (updated from "B")
+                "I",   # isort (import sorting)
+                "UP",  # pyupgrade (modern Python)
+                "D",   # pydocstyle (docstrings)
+                "C4",  # Comprehensions
+                "RUF", # Ruff-specific rules
+            ],
+            "ignore": ["E501"],  # Ignore line length (handled by formatters)
+            "per-file-ignores": {
+                "tests/*": ["S101"]  # Allow `assert` in tests
+            },
+            # "strict": True,  # Only enable if you want ALL rules
+        },
+       
+    }
 
-    @staticmethod
+    @staticmethod 
     def get_pylint_config() -> Dict[str, Any]:
         return {
             "MASTER": {
-                "load-plugins": "pylint.extensions.mccabe"
+                "load-plugins": "pylint.extensions.mccabe",
+                "enable-all-extensions": True
             },
             "MESSAGES CONTROL": {
-                "disable": "missing-docstring,too-few-public-methods,invalid-name"
+                "disable": ""
+            },
+            "BASIC": {
+                "good-names": ["i", "j", "k", "ex", "run", "_"]
             }
         }
 
@@ -83,67 +98,171 @@ class LinterConfig:
         return {
             'target': ['*'],
             'recursive': True,
-            'confidence': 'low',
-            'severity': 'low',
+            'confidence': 'high',
+            'severity': 'high',
             'tests': [],
             'skips': []
         }
 
+import toml
+import json
+import configparser
+from pathlib import Path
+from typing import Union
+
 def setup_linter_config(linter: str) -> Path:
-    """Create temporary linter configuration file"""
+    """Create temporary linter configuration file with validation."""
     config_dir = Path("/tmp/pink-coded-config")
     config_dir.mkdir(exist_ok=True)
+
+    try:
+        if linter == Linter.RUFF:
+            config_path = config_dir / "ruff.toml"
+            ruff_config = LinterConfig.get_ruff_config()
+            
+            # Validate the config is a valid TOML-serializable dict
+            if not isinstance(ruff_config, dict):
+                raise ValueError("Ruff config must be a dictionary")
+            
+            # Write and verify the file
+            with open(config_path, "w") as f:
+                toml.dump(ruff_config, f)
+            
+            # Verify the file can be read back
+            with open(config_path, "r") as f:
+                toml.load(f)  # Raises toml.TomlDecodeError if invalid
+            
+        elif linter == Linter.PYLINT:
+            config_path = config_dir / ".pylintrc"
+            parser = configparser.ConfigParser()
+            pylint_config = LinterConfig.get_pylint_config()
+            
+            if not isinstance(pylint_config, dict):
+                raise ValueError("Pylint config must be a nested dictionary")
+                
+            parser.read_dict(pylint_config)
+            with open(config_path, "w") as f:
+                parser.write(f)
+                
+        elif linter == Linter.BANDIT:
+            config_path = config_dir / ".bandit"
+            bandit_config = LinterConfig.get_bandit_config()
+            
+            if not isinstance(bandit_config, dict):
+                raise ValueError("Bandit config must be a dictionary")
+                
+            with open(config_path, "w") as f:
+                json.dump(bandit_config, f, indent=2)
+                
+        else:
+            config_path = config_dir / "config.ini"
+            
+        return config_path
+        
+    except Exception as e:
+        # Clean up invalid config files
+        if "config_path" in locals() and config_path.exists():
+            config_path.unlink()
+        raise RuntimeError(f"Failed to create {linter} config: {str(e)}")
+
+def build_linter_command(linter: str, config_path: Path, project_path: Path) -> list:
+    """Build the command to run the specified linter."""
+    project_path = project_path.resolve()  # Ensure absolute path
     
     if linter == Linter.RUFF:
-        config_path = config_dir / "ruff.toml"
-        with open(config_path, "w") as f:
-            toml.dump(LinterConfig.get_ruff_config(), f)
+        py_files = [str(f) for f in project_path.rglob("*.py")]
+        if not py_files:
+            return ["echo", "No Python files found"]
+        return [
+            "ruff",
+            "check",
+            *py_files,
+            "--config",
+            str(config_path),
+            "--output-format=json"
+        ]
     elif linter == Linter.PYLINT:
-        config_path = config_dir / ".pylintrc"
-        parser = configparser.ConfigParser()
-        parser.read_dict(LinterConfig.get_pylint_config())
-        parser.write(config_path.open("w"))
+        py_files = [str(f) for f in project_path.rglob("*.py")]
+        if not py_files:
+            return ["echo", "No Python files found"]
+        return [
+            "pylint",
+            "--rcfile",
+            str(config_path),
+            "--output-format=json",
+            "--persistent=no",
+            *py_files
+        ]
     elif linter == Linter.BANDIT:
-        config_path = config_dir / ".bandit"
-        with open(config_path, "w") as f:
-            json.dump(LinterConfig.get_bandit_config(), f)
+        return [
+            "bandit",
+            "-r",
+            str(project_path),
+            "-c",
+            str(config_path),
+            "-f",
+            "json",
+            "-n", "5"
+        ]
+    elif linter == Linter.RADON:
+        py_files = [str(f) for f in project_path.rglob("*.py")]
+        if not py_files:
+            return ["echo", "No Python files found"]
+        return [
+            "radon",
+            "cc",
+            "-s",
+            "-j",
+            *py_files
+        ]
     else:
-        config_path = config_dir / "config.ini"
-    
-    return config_path
+        raise ValueError(f"Unknown linter: {linter}")
 
 def detect_project_root(extracted_dir: Path) -> Path:
-    """Enhanced project root detection"""
-    # Check for common Python project markers
-    project_markers = [
-        "requirements.txt",
+    """Find the actual Python project root in extracted files"""
+    extracted_dir = extracted_dir.resolve()
+    
+    # First check for Python-specific project markers
+    python_markers = [
         "pyproject.toml",
         "setup.py",
-        "app.py",  # Your specific main file
-        "main.py"
+        "requirements.txt",
+        "Pipfile",
+        "setup.cfg",
+        "__init__.py"
     ]
     
-    for marker in project_markers:
-        if (extracted_dir / marker).exists():
-            return extracted_dir
+    for marker in python_markers:
+        for path in extracted_dir.rglob(marker):
+            return path.parent.resolve()
     
-    # Fallback to recursive search
-    return super().detect_project_root(extracted_dir)
+    # Fallback to any directory with Python files
+    py_files = list(extracted_dir.rglob("*.py"))
+    if py_files:
+        return py_files[0].parent.resolve()
+        
+    return extracted_dir.resolve()
 
 def detect_project_type(project_path: Path) -> str:
     """Detect project type based on file patterns"""
+    project_path = project_path.resolve()
     markers = {
-        ProjectType.WEB: {"requirements.txt", "pyproject.toml", "django", "flask"},
-        ProjectType.EMBEDDED: {"platformio.ini", "Makefile", ".ino", ".c"},
-        ProjectType.SECURITY: {"auth", "crypto", "security", "jwt"}
+        ProjectType.WEB: {"requirements.txt", "pyproject.toml", "django", "flask", "fastapi"},
+        ProjectType.EMBEDDED: {"platformio.ini", "Makefile", ".ino", ".c", "micropython"},
+        ProjectType.SECURITY: {"auth", "crypto", "security", "jwt", "oauth"}
     }
     
     scores = {pt: 0 for pt in ProjectType}
     for item in project_path.rglob("*"):
         if item.is_file():
+            content = item.read_text(errors="ignore").lower() if item.suffix == ".py" else ""
             for pt, patterns in markers.items():
-                if any(p in item.name.lower() or p in str(item.relative_to(project_path)).lower() 
-                      for p in patterns):
+                if any(
+                    (p in item.name.lower()) or
+                    (p in str(item.relative_to(project_path)).lower()) or
+                    (p.isalpha() and p in content)
+                    for p in patterns
+                ):
                     scores[pt] += 1
     
     if max(scores.values()) == 0:
@@ -151,138 +270,175 @@ def detect_project_type(project_path: Path) -> str:
     return max(scores.items(), key=lambda x: x[1])[0]
 
 def generate_flamingo_message(issue: dict) -> str:
-    """
-    Generate a user-friendly message for a linter issue.
-    """
+    """Generate a user-friendly message for a linter issue."""
     return f"[{issue.get('type', '').capitalize()}] {issue.get('code', '')}: {issue.get('message', '')}"
 
 def parse_linter_output(output: str, linter: str, base_path: Path) -> List[Dict[str, Any]]:
-    """Parse linter output into standardized format"""
+    """Parse linter output into standardized format.
+    
+    Args:
+        output: Raw linter output string
+        linter: Linter name (e.g., 'radon', 'ruff')
+        base_path: Base directory for relative file paths
+        
+    Returns:
+        List of standardized issue dictionaries
+    """
     if not output.strip():
         return []
+
+    base_path = base_path.resolve()
     
     try:
-        if linter == Linter.RUFF:
-            issues = json.loads(output)
-            parsed = []
-            for issue in issues:
-                file_path = Path(issue["filename"])
-                rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else issue["filename"]
-                issue_type = "warning"  # Default to warning for Ruff
-                
-                # Map specific codes to error level
-                if issue["code"].startswith(("E", "F")):
-                    issue_type = "error"
-                
-                parsed.append({
-                    "type": issue_type,
-                    "file": rel_path,
-                    "line": issue["location"]["row"],
-                    "message": issue["message"],
-                    "code": issue["code"],
-                    "url": issue.get("url", ""),
-                    "flamingo_message": generate_flamingo_message({
-                        "code": issue["code"],
-                        "message": issue["message"],
-                        "type": issue_type
-                    })
-                })
-            return parsed
-
-        elif linter == Linter.PYLINT:
-            issues = json.loads(output)
-            parsed = []
-            for issue in issues:
-                file_path = Path(issue["path"])
-                rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else issue["path"]
-                parsed.append({
-                    "type": issue["type"].lower(),
-                    "file": rel_path,
-                    "line": issue["line"],
-                    "message": issue["message"],
-                    "code": issue["message-id"],
-                    "url": ""
-                })
-            return parsed
-
-        elif linter == Linter.BANDIT:
-            try:
-                data = json.loads(output)
-                if not isinstance(data, dict) or "results" not in data:
-                    logger.error(f"Invalid Bandit output structure: {output[:200]}...")
-                    return []
-                
-                parsed = []
-                for issue in data["results"]:
-                    file_path = Path(issue["filename"])
-                    rel_path = str(file_path.relative_to(base_path)) if file_path.is_absolute() else issue["filename"]
-                    
-                    parsed.append({
-                        "type": "security",
-                        "file": rel_path,
-                        "line": issue["line_number"],
-                        "message": issue["issue_text"],
-                        "code": issue["test_id"],
-                        "url": issue["more_info"],
-                        "severity": issue["issue_severity"].lower(),
-                        "confidence": issue["issue_confidence"].lower()
-                    })
-                return parsed
-            except Exception as e:
-                logger.error(f"Bandit parse error: {str(e)}")
-                return []
-
-    except Exception as e:
-        logger.error(f"Error parsing {linter} output: {e}")
-        return []
-
-def parse_radon_output(output: str, base_path: Path) -> List[Dict[str, Any]]:
-    """Parse Radon complexity analysis output"""
-    try:
-        try:
-            data = json.loads(output)
-            if isinstance(data, str):
-                data = json.loads(data)
-        except json.JSONDecodeError:
-            logger.error(f"Invalid Radon output: {output[:200]}...")
+        # Special case: Empty RUFF output
+        if linter == Linter.RUFF and output.strip() == "[]":
             return []
-
-        issues = []
-        for file_path, items in data.items():
-            rel_path = str(Path(file_path).relative_to(base_path)) if Path(file_path).is_absolute() else file_path
             
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                    
-                complexity = item.get("complexity", 0)
-                if complexity <= 1:
-                    continue
+        # Special handling for Radon
+        if linter == Linter.RADON:
+            try:
+                # Normalize Radon output to always be a list of file results
+                if output.startswith("{"):
+                    data = [json.loads(output)]  # Single file -> wrap in list
+                elif output.startswith("["):
+                    data = json.loads(output)   # Multi-file (already list)
+                else:
+                    # Fallback for line-delimited JSON (unlikely for Radon)
+                    data = [json.loads(line) for line in output.splitlines() if line.strip()]
                 
-                issues.append({
-                    "type": "complexity",
-                    "file": rel_path,
-                    "line": item.get("lineno", 0),
-                    "message": f"{item.get('type', 'item').title()} '{item.get('name', '')}' (complexity: {complexity})",
-                    "code": f"RADON-{item.get('rank', 'U')}",
-                    "complexity": complexity,
-                    "severity": "high" if complexity > 10 else "medium"
-                })
+                # Ensure we have a list (even if empty)
+                if not isinstance(data, list):
+                    data = [data] if data else []
                 
-        return issues
+                return _parse_radon_output(data, base_path)
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.error(f"Failed to parse Radon output: {e}\nOutput: {output[:200]}...")
+                return []
+        logger.info(f"Raw Radon output: {output[:1000]}")  # Log first 1000 chars
+
+        # Standard linter processing
+        linter_type = {
+            "ruff": LinterType.RUFF,
+            "pylint": LinterType.PYLINT,
+            "bandit": LinterType.BANDIT,
+            "radon": LinterType.RADON
+        }.get(linter.lower(), LinterType.RUFF)
+        
+        issues = parse_linter_output_service(output, linter_type, base_path)
+        
+        return [{
+            "type": issue["type"].value,
+            "file": issue["file"],
+            "line": issue["line"],
+            "message": issue["message"],
+            "code": issue["code"],
+            "url": issue.get("url", ""),
+            "flamingo_message": generate_flamingo_message({
+                "code": issue["code"],
+                "message": issue["message"],
+                "type": issue["type"].value
+            })
+        } for issue in issues]
         
     except Exception as e:
-        logger.error(f"Radon parse failed: {str(e)}")
+        logger.error(f"Error parsing {linter} output: {e}\nOutput was:\n{output[:200]}...")
         return []
+
+def _parse_radon_output(data: List[Dict[str, Any]], base_path: Path) -> List[Dict[str, Any]]:
+    """Convert Radon's complexity data to standard issues.
+    
+    Args:
+        data: List of Radon file results (each containing 'filename' and 'results')
+        base_path: Base directory for relative paths
+        
+    Returns:
+        List of standardized issue dictionaries
+    """
+    issues = []
+    
+    for file_data in data:
+        if not isinstance(file_data, dict):
+            continue
+            
+        try:
+            filename = file_data.get("filename", "")
+            if not filename:
+                continue
+                
+            relative_path = str(Path(filename).relative_to(base_path))
+            
+            for result in file_data.get("results", []):
+                if not all(k in result for k in ["type", "name", "complexity"]):
+                    continue
+                    
+                issues.append({
+                    "type": LinterType.RADON.value,
+                    "file": relative_path,
+                    "line": result.get("lineno", 1),
+                    "message": (
+                        f"Cyclomatic complexity {result['complexity']} "
+                        f"in {result['type']} '{result['name']}'"
+                    ),
+                    "code": f"RADON-{result.get('rank', 'UNKNOWN')}",
+                    "url": "https://radon.readthedocs.io/en/latest/",
+                    "severity": _get_radon_severity(result["complexity"])
+                })
+        except Exception as e:
+            logger.warning(f"Skipping invalid Radon data in {filename}: {e}")
+            continue
+            
+    return issues
+
+
+def _get_radon_severity(complexity: int) -> str:
+    """Map Radon complexity score to severity levels."""
+    if complexity > 20:
+        return "critical"
+    elif complexity > 10:
+        return "high"
+    elif complexity > 5:
+        return "medium"
+    return "low"
+
+def _parse_radon_file_data(file_data: Dict[str, Any], rel_path: str) -> List[Dict[str, Any]]:
+    """Parse Radon file data into issues"""
+    issues = []
+    
+    # Handle methods
+    for method in file_data.get('methods', []):
+        issues.append({
+            "type": "complexity",
+            "file": rel_path,
+            "line": method['lineno'],
+            "message": f"Method '{method['name']}' has complexity {method['complexity']}",
+            "code": f"RADON-M{method['complexity']}",
+            "linter": "radon"
+        })
+    
+    # Handle classes
+    for cls in file_data.get('classes', []):
+        issues.append({
+            "type": "complexity",
+            "file": rel_path,
+            "line": cls['lineno'],
+            "message": f"Class '{cls['name']}' has complexity {cls['complexity']}",
+            "code": f"RADON-C{cls['complexity']}",
+            "linter": "radon"
+        })
+    
+    return issues
 
 async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
     """Run an individual linter and return results"""
     try:
+        project_path = project_path.resolve()
         logger.info(f"Running {linter} analysis in: {project_path}")
         
         # Find all Python files recursively
         py_files = list(project_path.rglob("*.py"))
-        logger.info(f"Found {len(py_files)} Python files")
+        logger.info(f"Found {len(py_files)} Python files:")
+        for py_file in py_files:
+            logger.info(f"- {py_file.relative_to(project_path)}")
         
         if not py_files and linter != Linter.RADON:
             return {
@@ -292,44 +448,8 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
                 "raw_stderr": ""
             }
 
-        # Run the linter on the project root
+        # Build linter command
         config_path = setup_linter_config(linter)
-        def build_linter_command(linter, config_path, project_path):
-            if linter == Linter.RUFF:
-                return [
-                    "ruff",
-                    "check",
-                    "--config", str(config_path),
-                    "--output-format=json",
-                    "--no-cache",
-                    str(project_path)
-                ]
-            elif linter == Linter.PYLINT:
-                return [
-                    "pylint",
-                    f"--rcfile={config_path}",
-                    "--output-format=json",
-                    "--recursive=y",
-                    str(project_path)
-                ]
-            elif linter == Linter.BANDIT:
-                return [
-                    "bandit",
-                    "-r",
-                    "-f", "json",
-                    "-c", str(config_path),
-                    str(project_path)
-                ]
-            elif linter == Linter.RADON:
-                return [
-                    "radon",
-                    "cc",
-                    "-j",
-                    str(project_path)
-                ]
-            else:
-                raise ValueError(f"Unsupported linter: {linter}")
-
         cmd = build_linter_command(linter, config_path, project_path)
         
         logger.info(f"Executing: {' '.join(cmd)}")
@@ -341,88 +461,30 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
             timeout=300
         )
         
-    
+        # Special handling for Ruff's success case
+        if linter == Linter.RUFF and result.returncode != 0:
+            if "All checks passed" in result.stderr:
+                return {
+                    "success": True,
+                    "output": "[]",
+                    "issues": [],
+                    "raw_stderr": result.stderr
+                }
         
-        if linter == Linter.RUFF:
-            cmd = [
-                "ruff",
-                "check",
-                "--config", str(config_path),
-                "--output-format=json",
-                "--no-cache",
-                str(project_path)
-            ]
-        elif linter == Linter.PYLINT:
-            cmd = [
-                "pylint",
-                f"--rcfile={config_path}",
-                "--output-format=json",
-                "--recursive=y",
-                str(project_path)
-            ]
-        elif linter == Linter.BANDIT:
-            cmd = [
-                "bandit",
-                "-r",
-                "-f", "json",
-                "-c", str(config_path),
-                str(project_path)
-            ]
-        elif linter == Linter.RADON:
-            cmd = [
-                "radon",
-                "cc",
-                "-j",
-                str(project_path)
-            ]
-        else:
-            raise ValueError(f"Unsupported linter: {linter}")
-
-        logger.info(f"Executing: {' '.join(cmd)}")
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=str(project_path),
-            timeout=300
-        )
-
-        # Log output for debugging
-        logger.info(f"{linter} stdout (first 500 chars):\n{result.stdout[:500]}...")
+        logger.debug(f"{linter} stdout: {result.stdout[:200]}...")
         if result.stderr:
-            logger.info(f"{linter} stderr:\n{result.stderr}")
-
-        # Handle success codes
-        success = True
-        if linter == Linter.RUFF:
-            success = result.returncode in [0, 4]  # 0=no issues, 4=issues found
-        elif linter == Linter.BANDIT:
-            success = result.returncode in [0, 1]  # 0=no issues, 1=issues found
-        else:
-            success = result.returncode == 0
-
+            logger.warning(f"{linter} stderr: {result.stderr[:200]}...")
+        
         # Parse output
-        issues = []
-        if linter == Linter.RADON:
-            try:
-                radon_data = json.loads(result.stdout)
-                if isinstance(radon_data, str):  # Handle unexpected string output
-                    radon_data = json.loads(radon_data)
-                issues = parse_radon_output(json.dumps(radon_data), project_path)
-            except Exception as e:
-                logger.error(f"Radon parse failed: {e}")
-                issues = []
-        else:
-            issues = parse_linter_output(result.stdout, linter, project_path)
+        issues = parse_linter_output(result.stdout, linter, project_path)
         
         logger.info(f"{linter} analysis completed. Found {len(issues)} issues.")
         return {
-            "success": success,
+            "success": True,
             "output": result.stdout,
             "issues": issues,
             "raw_stderr": result.stderr
         }
-
     except subprocess.TimeoutExpired:
         logger.error(f"{linter} analysis timed out")
         return {
@@ -431,7 +493,7 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
             "raw_stderr": "Process exceeded 5 minute limit"
         }
     except Exception as e:
-        logger.error(f"{linter} failed: {e}")
+        logger.error(f"{linter} failed: {e}", exc_info=True)
         return {
             "success": False,
             "error": str(e),
@@ -440,53 +502,34 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
 
 async def run_linter_analysis(project_path: Path, experience_level: str) -> Dict[str, Any]:
     """Run all appropriate linters for the project"""
-    # Always run security scanner first
-    bandit_result = await run_single_linter(Linter.BANDIT, project_path)
+    project_path = project_path.resolve()
     
-    # Determine project type
-    project_type = detect_project_type(project_path)
+    # Run all linters in parallel
+    ruff_result, pylint_result, bandit_result, radon_result = await asyncio.gather(
+        run_single_linter(Linter.RUFF, project_path),
+        run_single_linter(Linter.PYLINT, project_path),
+        run_single_linter(Linter.BANDIT, project_path),
+        run_single_linter(Linter.RADON, project_path)
+    )
     
-    # Run main linter based on type
-    if project_type == ProjectType.WEB:
-        main_result = await run_single_linter(Linter.RUFF, project_path)
-    else:
-        main_result = await run_single_linter(Linter.PYLINT, project_path)
-    
+    # Filter issues based on experience level
     if experience_level == "beginner":
-        # Filter out some complex issues for beginners
-        main_result["issues"] = [issue for issue in main_result.get("issues", []) 
-                               if not issue.get("code", "").startswith(("E", "F"))]
-
-    # Always run complexity analysis
-    radon_result = await run_single_linter(Linter.RADON, project_path)
+        ruff_result["issues"] = [i for i in ruff_result.get("issues", []) 
+                               if i.get("code", "").startswith(("E", "F", "W"))]
+        pylint_result["issues"] = [i for i in pylint_result.get("issues", [])
+                                 if i.get("type") in ("error", "warning")]
     
-    result = {
-        "project_type": project_type.value if isinstance(project_type, Enum) else project_type,
-        "linter": "ruff" if project_type == ProjectType.WEB else "pylint",
-        "complexity": "radon",
-        "security_scan": {
-            "success": bandit_result["success"],
-            "issues": bandit_result.get("issues", []),
-            "error": bandit_result.get("error")
-        },
-        "main_analysis": {
-            "success": main_result["success"],
-            "issues": main_result.get("issues", []),
-            "error": main_result.get("error")
-        },
-        "complexity_analysis": {
-            "success": radon_result["success"],
-            "issues": radon_result.get("issues", []),
-            "error": radon_result.get("error")
+    return {
+        "project_type": detect_project_type(project_path).value,
+        "experience_level": experience_level,
+        "result": {
+            "ruff": ruff_result,
+            "pylint": pylint_result,
+            "bandit": bandit_result,
+            "radon": radon_result
         }
     }
 
-    logger.info(f"Final analysis result structure: {json.dumps(result, indent=2)}")
-    return {
-        "project_type": project_type.value,
-        "experience_level": experience_level,
-        "result": result
-    }
 
 async def cleanup_temp_dirs():
     for session_id, temp_dir in ACTIVE_SESSIONS.items():
@@ -520,10 +563,12 @@ async def analyze_zip(zip_file: UploadFile = File(...)):
         
         # Find the actual project root
         project_path = detect_project_root(upload_dir)
-        logger.info(f"Analyzing project at: {project_path}")
+        logger.info(f"Project structure in {project_path}:")
+        for f in project_path.rglob("*"):
+            logger.info(f"- {f.relative_to(project_path)}")
         
         # Run analysis
-        result = await run_linter_analysis(project_path, "beginner")
+        result = await run_linter_analysis(project_path, "intermediate")
         ACTIVE_ANALYSES[session_id] = result
         
         return {
@@ -532,7 +577,7 @@ async def analyze_zip(zip_file: UploadFile = File(...)):
             "temp_dir": str(temp_dir)
         }
     except Exception as e:
-        logger.error(f"ZIP analysis failed: {str(e)}")
+        logger.error(f"ZIP analysis failed: {str(e)}", exc_info=True)
         raise HTTPException(500, detail=str(e))
         
 @router.post("/generate-fix")
@@ -543,7 +588,6 @@ async def generate_fix(
 ):
     """Generate a fix for a specific code issue"""
     try:
-        # TODO: Replace with actual DeepSeek API call
         prompt = f"""Generate a fix for this Python issue:
         - File: {issue.get('file')}
         - Line: {issue.get('line')}
@@ -556,7 +600,7 @@ async def generate_fix(
         Provide ONLY the corrected code with minimal changes.
         Include brief explanation if the fix is non-trivial."""
         
-        # Mock response - replace with actual API call
+        # TODO: Replace with actual API call
         if issue.get('code') == 'D100':
             return {
                 "fix": '"""Module docstring"""\n' + code,
@@ -564,12 +608,12 @@ async def generate_fix(
             }
         else:
             return {
-                "fix": code,  # Default to no changes
+                "fix": code,
                 "explanation": "No automatic fix available for this issue type"
             }
             
     except Exception as e:
-        logger.error(f"Fix generation failed: {e}")
+        logger.error(f"Fix generation failed: {e}", exc_info=True)
         raise HTTPException(500, detail=str(e))
 
 @router.post("/analyze-code")
@@ -581,7 +625,6 @@ async def analyze_code(
     temp_dir: str = Body(None)
 ):
     try:
-        # Basic validation
         if not code.strip():
             return {
                 "main_analysis": {"issues": []},
@@ -609,12 +652,10 @@ async def analyze_code(
             
             # Update the main analysis issues
             if result.get("main_analysis"):
-                # Remove old issues for this file
                 result["main_analysis"]["issues"] = [
                     issue for issue in result["main_analysis"]["issues"] 
                     if issue["file"] != file_path
                 ]
-                # Add new issues
                 result["main_analysis"]["issues"].extend(file_issues)
             
             return result
@@ -634,7 +675,7 @@ async def analyze_code(
         logger.error("Invalid JSON in analysis request")
         raise HTTPException(400, detail="Invalid code format")
     except Exception as e:
-        logger.error(f"Analysis error: {str(e)}")
+        logger.error(f"Analysis error: {str(e)}", exc_info=True)
         raise HTTPException(500, detail="Analysis failed")
     
 @router.post("/apply-fix")
@@ -661,7 +702,6 @@ async def apply_fix(
         content = file_location.read_text()
         lines = content.splitlines()
         
-        # Simple line replacement
         if issue.get('line'):
             line_num = issue['line'] - 1
             if 0 <= line_num < len(lines):
@@ -677,7 +717,7 @@ async def apply_fix(
             "file_path": str(file_location)
         }
     except Exception as e:
-        logger.error(f"Fix failed: {e}")
+        logger.error(f"Fix failed: {e}", exc_info=True)
         raise HTTPException(500, detail=str(e))
     
 @router.post("/export-project")
@@ -711,7 +751,7 @@ async def export_project(
             media_type='application/zip'
         )
     except Exception as e:
-        logger.error(f"Export failed: {e}")
+        logger.error(f"Export failed: {e}", exc_info=True)
         raise HTTPException(500, detail=str(e))
 
 @router.get("/debug-config")

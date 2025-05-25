@@ -1,24 +1,30 @@
-[linter]
+# ruff.toml
+
+[lint]
 select = [
-  "E", "F", "W",  # Basic errors/warnings
-  "B",   # Bugbear (common pitfalls)
+  "E",   # Pyflakes errors
+  "F",   # Pyflakes fixes
+  "W",   # Pyflakes warnings
+  "B9",  # Bugbear (common pitfalls)
   "C4",  # Comprehensions
-  "S",   # Security (bandit)
+  "S1",  # Security (bandit)
   "UP",  # Pyupgrade (modern Python)
-  "I",   # Import sorting
-  "D",   # Docstrings
-  "PL",  # Pylint-equivalent rules
-  "RUF", # Ruff-specific rules
+  "I",   # Import sorting (isort)
+  "D",   # Docstrings (pydocstyle)
+  "RUF" # Ruff-specific rules
 ]
 ignore = [
-  "E501",  # Line length (handled separately)
-  "D1",    # Docstring conventions
-  "PLR09", # Too many branches
+  "E501",  # Line length (handled by formatters)
+  "D1",    # Docstring conventions (if not needed)
+  "PLR09", # Too many branches (if too strict)
+  "D203",  # Disable conflicting docstring rules
+  "D211", 
+  "D205"
 ]
 
 [per-file-ignores]
 "tests/*" = ["S101"]  # Allow asserts in tests
-"migrations/*" = ["E501"]  # Relax style in migrations
+"migrations/*" = ["E501"]  # Relax line length in migrations
 
 [pyupgrade]
 keep-runtime-typing = true
