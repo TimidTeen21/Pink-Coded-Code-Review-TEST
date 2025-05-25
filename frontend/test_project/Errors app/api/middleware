@@ -1,0 +1,23 @@
+from flask import request
+
+# CORS wide open
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
+
+# No CSRF protection
+def check_csrf():
+    if request.method == "POST":
+        token = request.headers.get("X-CSRF-Token")
+        if not token:  # Missing token = allowed!
+            return True
+    return True
+
+# Broken auth check
+def is_authenticated():
+    return "user_id" in request.cookies  # No signature validation
+
+# No rate limiting
+def rate_limit():
+    return True  # Just allows everything

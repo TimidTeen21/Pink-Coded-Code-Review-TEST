@@ -27,27 +27,42 @@ export type IssueType =
     };
   }
 
-export interface AnalysisResult {
+interface AnalysisResult {
+  project_type: string;
+  experience_level: string;
+  // Either flattened structure
   main_analysis?: {
     issues?: Issue[];
     error?: string;
-    raw?: any;
+    raw_stderr?: string;
+    success?: boolean;
   };
   complexity_analysis?: {
     issues?: Issue[];
-    error?: string;
-    raw?: any;
   };
   security_scan?: {
     issues?: Issue[];
-    error?: string;
-    raw?: any;
   };
-  project_type?: string;
-  linter?: string;
+  // OR nested structure
+  result?: {
+    main_analysis?: {
+      issues?: Issue[];
+      error?: string;
+      raw_stderr?: string;
+      success?: boolean;
+    };
+    complexity_analysis?: {
+      issues?: Issue[];
+    };
+    security_scan?: {
+      issues?: Issue[];
+    };
+  };
   session_id?: string;
   temp_dir?: string;
+  linter?: string;
 }
+
 
 type OnFixType = (updatedIssues: Issue[]) => void;
 

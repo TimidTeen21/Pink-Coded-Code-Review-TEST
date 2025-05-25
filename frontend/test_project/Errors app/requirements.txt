@@ -1,0 +1,3 @@
+flask==0.12.4  # Outdated with known vulnerabilities
+pyyaml==5.1    # Version with security issues
+requests==2.20.0  # Outdated version

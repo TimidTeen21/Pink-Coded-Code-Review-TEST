@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <h2>Search Posts</h2>
+    <form method="POST">
+        Search: <input type="text" name="query">
+        <input type="submit" value="Search">
+    </form>
+    
+    {% if results %}
+        <h3>Results:</h3>
+        <ul>
+        {% for post in results %}
+            <li>{{ post[2] | safe }}</li>  <!-- XSS vulnerable due to | safe filter -->
+        {% endfor %}
+        </ul>
+    {% endif %}
+{% endblock %}

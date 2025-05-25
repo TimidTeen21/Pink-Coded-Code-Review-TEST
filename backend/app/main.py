@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 import logging
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, profile_router, analysis, files, feedback_router
+from app.routers import auth, profile_router, analysis, files, feedback_router,slack
 from app.routers.explanation_router import router as explanation_router
 import asyncio
 
@@ -28,7 +28,9 @@ app.add_middleware(
 # Include routers with proper prefixes
 # Ensure this comes after CORS middleware
 app.include_router(auth.router)
-app.include_router(files.router, prefix="/api/v1")
+app.include_router(slack.router)
+app.include_router(slack.router, prefix="/api/v1")
+app.include_router(files.router)
 app.include_router(analysis.router)
 app.include_router(explanation_router, prefix="/api/v1")
 app.include_router(feedback_router.router, prefix="/api/v1")

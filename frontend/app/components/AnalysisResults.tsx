@@ -9,6 +9,7 @@ import {
 import { MdAutoFixHigh } from 'react-icons/md';
 import { Issue, AnalysisResult } from '@/types';
 import { CodeEditor } from '@/components/CodeEditor/CodeEditor';
+import SlackShare from './SlackShare';
 
 interface AnalysisResultsProps {
   result?: AnalysisResult;
@@ -27,41 +28,85 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
     visible: false 
   });
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [fileLoadError, setFileLoadError] = useState<string | null>(null);
+  
+const getIssues = () => {
+  if (!result) return [];
 
-  useEffect(() => {
-  console.log("Full result from backend:", result);
-  console.log("Main analysis issues:", result?.main_analysis?.issues);
-  console.log("All combined issues:", [
-    ...(result?.main_analysis?.issues || []),
-    ...(result?.complexity_analysis?.issues || []),
-    ...(result?.security_scan?.issues || [])
-  ]);
-}, [result]);
-  // Initialize with all issues
+  // Helper function to safely extract issues from multiple possible paths
+  const getIssuesFromPaths = (paths: string[]) => {
+    let current = result as any;
+    for (const path of paths) {
+      if (current && current[path]?.issues) {
+        return current[path].issues;
+      }
+      if (current && current[path]) {
+        current = current[path];
+      } else {
+        break;
+      }
+    }
+    return [];
+  };
+
+  // Check multiple possible paths for each linter
+  const pylintIssues = getIssuesFromPaths(['result', 'pylint', 'linter_pylint']);
+  const banditIssues = getIssuesFromPaths(['result', 'bandit', 'linter_bandit']);
+  const radonIssues = getIssuesFromPaths(['result', 'radon', 'linter_radon']);
+  const ruffIssues = getIssuesFromPaths(['result', 'ruff', 'linter_ruff']); 
+  const mainIssues = getIssuesFromPaths(['result', 'main_analysis', 'analysis']);
+  const complexityIssues = getIssuesFromPaths(['result', 'complexity_analysis']);
+  const securityIssues = getIssuesFromPaths(['result', 'security_scan']);
+
+  // Combine all issues with proper typing and fallbacks
+  const allIssues = [
+    ...mainIssues,
+    ...complexityIssues,
+    ...securityIssues,
+    ...pylintIssues,
+    ...banditIssues,
+    ...radonIssues,
+    ...ruffIssues
+  ].filter((issue): issue is Issue => Boolean(issue))
+   .map(issue => ({
+      ...issue,
+      file: issue.file || 'unknown',
+      line: issue.line || 0,
+      code: issue.code || 'NO_CODE',
+      message: issue.message || 'No message',
+      type: issue.type || (
+        issue.code?.startsWith('E') ? 'error' :
+        issue.code?.startsWith('W') ? 'warning' :
+        issue.code?.startsWith('B') ? 'security' :
+        issue.code?.includes('RADON') ? 'complexity' :
+        issue.code?.startsWith('F') ? 'error' :  // Ruff errors
+        issue.code?.startsWith('RUF') ? 'warning' :  // Ruff-specific
+        issue.code?.startsWith('PLC') ? 'error' :  // Pylint convention
+        issue.code?.startsWith('PLE') ? 'error' :  // Pylint error
+        issue.code?.startsWith('PLW') ? 'warning' :  // Pylint warning
+        issue.code?.startsWith('S') ? 'security' :  //Bandit security
+        'info'
+      ),
+      flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
+      url: issue.url || ''
+    }));
+
+  console.log('All detected issues:', {
+    mainIssues,
+    complexityIssues,
+    securityIssues,
+    pylintIssues,
+    banditIssues,
+    radonIssues,
+    ruffIssues,
+    combined: allIssues
+  });
+
+  return allIssues;
+};
   useEffect(() => {
     if (result) {
-      // Normalize all issues to include required fields
-      // Replace the issues collection code with:
-const allIssues = [
-  ...(result?.main_analysis?.issues?.map((issue: any) => ({
-    ...issue,
-    flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
-    url: issue.url || ''
-  })) || []),
-  ...(result?.complexity_analysis?.issues?.map((issue: any) => ({
-    ...issue,
-    flamingo_message: issue.flamingo_message || `🦩 Complexity: ${issue.message}`,
-    url: issue.url || '',
-    type: issue.type || 'complexity'
-  })) || []),
-  ...(result?.security_scan?.issues?.map((issue: any) => ({
-    ...issue,
-    flamingo_message: issue.flamingo_message || `🦩 Security: ${issue.message}`,
-    url: issue.url || '',
-    type: issue.type || 'security'
-  })) || [])
-];
-
+      const allIssues = getIssues();
       setIssuesWithExplanations(allIssues);
       
       const initialFeedbackStates = allIssues.reduce((acc, issue) => {
@@ -75,29 +120,41 @@ const allIssues = [
   }, [result]);
 
   const fetchFileContent = async (filePath: string) => {
-    try {
-      const params = new URLSearchParams({
-        path: filePath,
-        session_id: result?.session_id || '',
-        ...(result?.temp_dir && { temp_dir: result.temp_dir })
-      });
+  try {
+    // Always use the full relative path including 'upload/' if needed
+    const effectivePath = filePath.startsWith('upload/') ? filePath : `upload/${filePath}`;
+    
+    const params = new URLSearchParams({
+      path: effectivePath,
+      session_id: result?.session_id || '',
+      ...(result?.temp_dir && { temp_dir: result.temp_dir })
+    });
 
-      const response = await fetch(
-        `http://localhost:8000/api/v1/files?${params.toString()}`
-      );
-      
-      if (!response.ok) throw new Error(await response.text());
-      
-      const { content } = await response.json();
-      setFileContent(content);
-      setActiveFile(filePath);
-      
-    } catch (error) {
-      console.error('Failed to load file:', error);
-      setFileContent(`# Error loading ${filePath}\n# ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setActiveFile(filePath);
+    const response = await fetch(
+      `http://localhost:8000/api/v1/files?${params.toString()}`
+    );
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("Full error response:", errorData);
+      throw new Error(errorData.detail?.message || `File not found at: ${effectivePath}`);
     }
-  };
+    
+    const { content } = await response.json();
+    setFileContent(content);
+    setActiveFile(filePath);
+    
+  } catch (error) {
+    console.error('File load failed:', {
+      error,
+      path: filePath,
+      sessionId: result?.session_id,
+      tempDir: result?.temp_dir
+    });
+    setFileContent(`# Error loading ${filePath}\n# ${error instanceof Error ? error.message : 'Unknown error'}`);
+    setActiveFile(filePath);
+  }
+};
 
   const toggleExpand = (issue: Issue) => {
     const issueId = `${issue.file}-${issue.line}-${issue.code}`;
@@ -114,6 +171,7 @@ const allIssues = [
   const fetchExplanation = async (issue: Issue) => {
     const issueId = `${issue.file}-${issue.line}-${issue.code}`;
     setLoadingExplanations(prev => ({ ...prev, [issueId]: true }));
+    
     
     try {
       const response = await fetch(
@@ -385,6 +443,8 @@ const allIssues = [
 
   const hasError = !!result.main_analysis?.error;
   const hasIssues = issuesWithExplanations.length > 0;
+  // Add to your analyze-zip handler
+
 
   return (
     <div className="space-y-4">
@@ -407,6 +467,7 @@ const allIssues = [
             {hasIssues ? `${issuesWithExplanations.length} issues found` : 'No issues found'}
           </div>
         )}
+        
       </div>
 
       {/* Error Display */}
@@ -416,9 +477,9 @@ const allIssues = [
             <FiAlertTriangle className="h-4 w-4" />
             <span>Error: {result.main_analysis?.error}</span>
           </div>
-          {result.main_analysis?.raw?.stderr && (
+          {result.main_analysis?.raw_stderr && (
             <pre className="mt-2 text-xs text-red-300 overflow-auto max-h-40">
-              {result.main_analysis.raw.stderr}
+              {result.main_analysis.raw_stderr}
             </pre>
           )}
         </div>
@@ -711,6 +772,14 @@ const allIssues = [
           </div>
         </div>
       )}
+
+      {/* Slack Share Component */}
+
+  <SlackShare 
+    codeSnippet={''} 
+    analysisResult={''}
+    className="mt-4" // optional additional styling
+  />
     </div>
   );
 };

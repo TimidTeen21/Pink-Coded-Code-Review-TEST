@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <h2>Money Transfer</h2>
+    {% if message %}
+        <p style="color: green">{{ message }}</p>
+    {% endif %}
+    <form method="POST">
+        Amount: <input type="number" name="amount"><br>
+        Recipient: <input type="text" name="recipient"><br>
+        <input type="submit" value="Transfer">
+    </form>
+{% endblock %}
