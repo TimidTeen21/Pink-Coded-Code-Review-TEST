@@ -30,7 +30,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(slack.router)
 app.include_router(slack.router, prefix="/api/v1")
-app.include_router(files.router, prefix="/api/v1")
+app.include_router(files.router)
 app.include_router(analysis.router)
 app.include_router(explanation_router, prefix="/api/v1")
 app.include_router(feedback_router.router, prefix="/api/v1")

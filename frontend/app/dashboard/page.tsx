@@ -68,35 +68,35 @@ export default function DashboardPage() {
                           Dashboard
                       </button>
                       <button
-                          onClick={() => setActiveTab('analysis')}
+                          onClick={() => setActiveTab('dashboard')}
                           className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${activeTab === 'analysis' ? 'bg-pink-600/20 text-pink-400' : 'hover:bg-gray-700'}`}
                       >
                           <TbZoomCode />
                           New Analysis
                       </button>
                       <button
-                          onClick={() => setActiveTab('rules')}
+                          onClick={() => setActiveTab('analysis')}
                           className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${activeTab === 'rules' ? 'bg-pink-600/20 text-pink-400' : 'hover:bg-gray-700'}`}
                       >
                           <FiShield />
                           Rules & Quality Gates
                       </button>
                       <button
-                          onClick={() => setActiveTab('chat')}
+                          onClick={() => setActiveTab('rules')}
                           className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${activeTab === 'chat' ? 'bg-pink-600/20 text-pink-400' : 'hover:bg-gray-700'}`}
                       >
                           <FiMessageSquare />
                           AI Flamingo Chat
                       </button>
                       <button
-                          onClick={() => setActiveTab('profile')}
+                          onClick={() => setActiveTab('chat')}
                           className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${activeTab === 'profile' ? 'bg-pink-600/20 text-pink-400' : 'hover:bg-gray-700'}`}
                       >
                           <FiUser />
                           My Profile
                       </button>
                       <button
-                          onClick={() => setActiveTab('achievements')}
+                          onClick={() => setActiveTab('profile')}
                           className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${activeTab === 'achievements' ? 'bg-pink-600/20 text-pink-400' : 'hover:bg-gray-700'}`}
                       >
                           <FiAward />
@@ -132,6 +132,7 @@ export default function DashboardPage() {
                           className="bg-gray-700 text-white p-2 rounded-lg text-sm"
                       >
                           <option value="dashboard">Dashboard</option>
+                          <option value="analysis">New Analysis</option>
                           <option value="rules">Rules & Gates</option>
                           <option value="chat">AI Flamingo</option>
                           <option value="profile">Profile</option>

@@ -23,66 +23,61 @@ class DirectoryResponse(BaseModel):
 
 @router.get("")
 async def get_file_contents(
-    path: str = Query(..., description="Relative path to the file"),
-    session_id: str = Query(..., description="Current session ID"),
-    temp_dir: Optional[str] = Query(None, description="Explicit temp directory path")
+    path: str = Query(...),
+    session_id: str = Query(...),
+    temp_dir: Optional[str] = Query(None)
 ):
     try:
-        # Normalize path (handle Windows/Unix paths)
-        clean_path = Path(path.strip('/')).as_posix()
-        filename = clean_path.split('/')[-1]
+        clean_path = Path(path.strip('/'))
         
-        # Try these locations in order:
-        possible_locations = []
-        
-        # 1. Check explicit temp_dir if provided
-        if temp_dir:
-            temp_path = Path(temp_dir)
-            possible_locations.extend([
-                temp_path / clean_path,
-                temp_path / filename,
-                temp_path / "upload" / clean_path,
-                temp_path / "upload" / filename
-            ])
-        
-        # 2. Check session directory
+        # Debug: Log all available files
         if session_id in ACTIVE_SESSIONS:
             session_path = Path(ACTIVE_SESSIONS[session_id])
-            possible_locations.extend([
-                session_path / clean_path,
-                session_path / filename,
-                session_path / "upload" / clean_path,
-                session_path / "upload" / filename,
-                session_path / "project" / clean_path,
-                session_path / "project" / filename
-            ])
+            logger.info(f"Available files in session:")
+            for f in session_path.rglob('*'):
+                logger.info(f"- {f.relative_to(session_path)}")
+
+        # First try the exact path
+        potential_paths = [clean_path]
         
-        # Try each possible location
-        found_path = None
-        for location in possible_locations:
-            if location.exists() and location.is_file():
-                found_path = location
-                break
+        # Then try common variations
+        potential_paths.extend([
+            Path("upload") / clean_path,
+            clean_path.with_name(clean_path.name),  # Just the filename
+            Path("upload") / clean_path.name
+        ])
         
-        if not found_path:
-            searched = "\n".join([str(p) for p in possible_locations])
-            logger.error(f"File not found. Searched locations:\n{searched}")
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "message": f"File '{clean_path}' not found",
-                    "searched_locations": [str(p) for p in possible_locations]
+        for file_path in potential_paths:
+            full_path = Path(temp_dir or ACTIVE_SESSIONS[session_id]) / file_path
+            if full_path.exists() and full_path.is_file():
+                return {
+                    "content": full_path.read_text(encoding='utf-8'),
+                    "path": str(file_path)
                 }
-            )
+                
+        raise HTTPException(404, detail=f"File not found at any of: {potential_paths}")
         
-        return {
-            "content": found_path.read_text(encoding='utf-8'),
-            "path": str(found_path.relative_to(Path(ACTIVE_SESSIONS[session_id]))) 
-                    if session_id in ACTIVE_SESSIONS 
-                    else str(found_path)
-        }
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"File read error: {str(e)}")
+        logger.error(f"File error: {str(e)}")
         raise HTTPException(500, detail=str(e))
+    
+@router.get("/debug")
+async def debug_files(session_id: str):
+    if session_id not in ACTIVE_SESSIONS:
+        raise HTTPException(404, detail="Session not found")
+    
+    session_path = Path(ACTIVE_SESSIONS[session_id])
+    files = []
+    
+    for path in session_path.rglob('*'):
+        if path.is_file():
+            files.append({
+                "path": str(path.relative_to(session_path)),
+                "size": path.stat().st_size,
+                "modified": path.stat().st_mtime
+            })
+    
+    return {
+        "session_path": str(session_path),
+        "files": files
+    }

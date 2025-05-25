@@ -30,54 +30,43 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [fileLoadError, setFileLoadError] = useState<string | null>(null);
   
-  const getIssues = () => {
-    if (!result) return [];
-    
-    // Check for nested structure first
-    if (result.result) {
-      return [
-        ...(result.result.main_analysis?.issues?.map(issue => ({
-          ...issue,
-          flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
-          url: issue.url || ''
-        })) || []),
-        ...(result.result.complexity_analysis?.issues?.map(issue => ({
-          ...issue,
-          flamingo_message: issue.flamingo_message || `🦩 Complexity: ${issue.message}`,
-          url: issue.url || '',
-          type: issue.type || 'complexity'
-        })) || []),
-        ...(result.result.security_scan?.issues?.map(issue => ({
-          ...issue,
-          flamingo_message: issue.flamingo_message || `🦩 Security: ${issue.message}`,
-          url: issue.url || '',
-          type: issue.type || 'security'
-        })) || [])
-      ];
-    }
-    
-    // Fall back to flattened structure
-    return [
-      ...(result.main_analysis?.issues?.map(issue => ({
-        ...issue,
-        flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
-        url: issue.url || ''
-      })) || []),
-      ...(result.complexity_analysis?.issues?.map(issue => ({
-        ...issue,
-        flamingo_message: issue.flamingo_message || `🦩 Complexity: ${issue.message}`,
-        url: issue.url || '',
-        type: issue.type || 'complexity'
-      })) || []),
-      ...(result.security_scan?.issues?.map(issue => ({
-        ...issue,
-        flamingo_message: issue.flamingo_message || `🦩 Security: ${issue.message}`,
-        url: issue.url || '',
-        type: issue.type || 'security'
-      })) || [])
-    ];
-  };
+const getIssues = () => {
+  if (!result) return [];
+  
+  // DEBUG: Log raw result
+  console.log("RAW RESULT STRUCTURE:", JSON.stringify(result, null, 2));
 
+  // Extract issues from ALL possible locations
+  const sources = [
+    result?.result?.main_analysis?.issues,
+    result?.result?.complexity_analysis?.issues,
+    result?.result?.security_scan?.issues,
+    result?.main_analysis?.issues,
+    result?.complexity_analysis?.issues,
+    result?.security_scan?.issues
+  ];
+
+  // Flatten and filter out undefined/null and undefined issues
+  const rawIssues = sources.flat().filter((issue): issue is Issue => Boolean(issue));
+
+  console.log(`FOUND ${rawIssues.length} RAW ISSUES`);
+
+  return rawIssues.map(issue => ({
+    ...issue,
+    // Ensure required fields exist
+    file: issue.file || 'unknown',
+    line: issue.line || 0,
+    code: issue.code || 'NO_CODE',
+    message: issue.message || 'No message',
+    type: issue.type || (
+      issue.code?.startsWith('E') ? 'error' :
+      issue.code?.startsWith('W') ? 'warning' : 
+      'info'
+    ),
+    flamingo_message: issue.flamingo_message || `🦩 ${issue.message}`,
+    url: issue.url || ''
+  }));
+};
   useEffect(() => {
     if (result) {
       const allIssues = getIssues();
@@ -95,11 +84,11 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
 
   const fetchFileContent = async (filePath: string) => {
   try {
-    // Extract just the filename if path contains folders
-    const filename = filePath.split('/').pop() || filePath;
+    // Always use the full relative path including 'upload/' if needed
+    const effectivePath = filePath.startsWith('upload/') ? filePath : `upload/${filePath}`;
     
     const params = new URLSearchParams({
-      path: filename,  // Send just the filename
+      path: effectivePath,
       session_id: result?.session_id || '',
       ...(result?.temp_dir && { temp_dir: result.temp_dir })
     });
@@ -109,11 +98,9 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
     );
     
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(errorText.includes('detail') ? 
-        JSON.parse(errorText).detail : 
-        `File not found: ${filename}`
-      );
+      const errorData = await response.json();
+      console.error("Full error response:", errorData);
+      throw new Error(errorData.detail?.message || `File not found at: ${effectivePath}`);
     }
     
     const { content } = await response.json();
@@ -121,8 +108,13 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
     setActiveFile(filePath);
     
   } catch (error) {
-    console.error('Failed to load file:', error);
-    setFileContent(`# Error loading file\n# ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('File load failed:', {
+      error,
+      path: filePath,
+      sessionId: result?.session_id,
+      tempDir: result?.temp_dir
+    });
+    setFileContent(`# Error loading ${filePath}\n# ${error instanceof Error ? error.message : 'Unknown error'}`);
     setActiveFile(filePath);
   }
 };
@@ -142,6 +134,7 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
   const fetchExplanation = async (issue: Issue) => {
     const issueId = `${issue.file}-${issue.line}-${issue.code}`;
     setLoadingExplanations(prev => ({ ...prev, [issueId]: true }));
+    
     
     try {
       const response = await fetch(
@@ -413,6 +406,8 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
 
   const hasError = !!result.main_analysis?.error;
   const hasIssues = issuesWithExplanations.length > 0;
+  // Add to your analyze-zip handler
+
 
   return (
     <div className="space-y-4">
@@ -435,6 +430,7 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ result, userId }) => 
             {hasIssues ? `${issuesWithExplanations.length} issues found` : 'No issues found'}
           </div>
         )}
+        
       </div>
 
       {/* Error Display */}

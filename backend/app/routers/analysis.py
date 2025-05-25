@@ -1,6 +1,7 @@
 # backend/app/routers/analysis.py
 from fastapi import APIRouter, HTTPException, UploadFile, File, Body, Depends
 import subprocess
+import os
 import uuid
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -110,6 +111,24 @@ def setup_linter_config(linter: str) -> Path:
         config_path = config_dir / "config.ini"
     
     return config_path
+
+def detect_project_root(extracted_dir: Path) -> Path:
+    """Enhanced project root detection"""
+    # Check for common Python project markers
+    project_markers = [
+        "requirements.txt",
+        "pyproject.toml",
+        "setup.py",
+        "app.py",  # Your specific main file
+        "main.py"
+    ]
+    
+    for marker in project_markers:
+        if (extracted_dir / marker).exists():
+            return extracted_dir
+    
+    # Fallback to recursive search
+    return super().detect_project_root(extracted_dir)
 
 def detect_project_type(project_path: Path) -> str:
     """Detect project type based on file patterns"""
@@ -261,19 +280,68 @@ async def run_single_linter(linter: str, project_path: Path) -> Dict[str, Any]:
     try:
         logger.info(f"Running {linter} analysis in: {project_path}")
         
-        # Check for Python files (except for Radon which analyzes complexity)
-        if linter != Linter.RADON:
-            py_files = list(project_path.rglob("*.py"))
-            logger.info(f"Python files found: {len(py_files)}")
-            if not py_files:
-                return {
-                    "success": True,
-                    "output": "No Python files found",
-                    "issues": [],
-                    "raw_stderr": ""
-                }
+        # Find all Python files recursively
+        py_files = list(project_path.rglob("*.py"))
+        logger.info(f"Found {len(py_files)} Python files")
+        
+        if not py_files and linter != Linter.RADON:
+            return {
+                "success": True,
+                "output": "No Python files found",
+                "issues": [],
+                "raw_stderr": ""
+            }
 
+        # Run the linter on the project root
         config_path = setup_linter_config(linter)
+        def build_linter_command(linter, config_path, project_path):
+            if linter == Linter.RUFF:
+                return [
+                    "ruff",
+                    "check",
+                    "--config", str(config_path),
+                    "--output-format=json",
+                    "--no-cache",
+                    str(project_path)
+                ]
+            elif linter == Linter.PYLINT:
+                return [
+                    "pylint",
+                    f"--rcfile={config_path}",
+                    "--output-format=json",
+                    "--recursive=y",
+                    str(project_path)
+                ]
+            elif linter == Linter.BANDIT:
+                return [
+                    "bandit",
+                    "-r",
+                    "-f", "json",
+                    "-c", str(config_path),
+                    str(project_path)
+                ]
+            elif linter == Linter.RADON:
+                return [
+                    "radon",
+                    "cc",
+                    "-j",
+                    str(project_path)
+                ]
+            else:
+                raise ValueError(f"Unsupported linter: {linter}")
+
+        cmd = build_linter_command(linter, config_path, project_path)
+        
+        logger.info(f"Executing: {' '.join(cmd)}")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(project_path),
+            timeout=300
+        )
+        
+    
         
         if linter == Linter.RUFF:
             cmd = [
@@ -435,27 +503,27 @@ atexit.register(cleanup_temp_dirs)
 @router.post("/analyze-zip")
 async def analyze_zip(zip_file: UploadFile = File(...)):
     session_id = str(uuid.uuid4())
-    temp_dir = tempfile.mkdtemp(prefix=f"pink-coded-{session_id}-")
-    ACTIVE_SESSIONS[session_id] = temp_dir
+    temp_dir = Path(tempfile.mkdtemp(prefix=f"pink-coded-{session_id}-"))
+    ACTIVE_SESSIONS[session_id] = str(temp_dir)
     
     try:
-        zip_path = Path(temp_dir) / "upload.zip"
+        # Save ZIP
+        zip_path = temp_dir / "upload.zip"
         with zip_path.open("wb") as buffer:
             shutil.copyfileobj(zip_file.file, buffer)
         
-        # Create upload subdirectory
-        upload_dir = Path(temp_dir) / "upload"
-        upload_dir.mkdir(exist_ok=True)
-        
-        # Extract to upload subdirectory
+        # Extract to upload directory
+        upload_dir = temp_dir / "upload"
+        upload_dir.mkdir()
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(upload_dir)
         
-        # Set project path to upload directory
-        project_path = upload_dir
+        # Find the actual project root
+        project_path = detect_project_root(upload_dir)
+        logger.info(f"Analyzing project at: {project_path}")
         
-        experience_level = "beginner"
-        result = await run_linter_analysis(project_path, experience_level)
+        # Run analysis
+        result = await run_linter_analysis(project_path, "beginner")
         ACTIVE_ANALYSES[session_id] = result
         
         return {
@@ -464,7 +532,7 @@ async def analyze_zip(zip_file: UploadFile = File(...)):
             "temp_dir": str(temp_dir)
         }
     except Exception as e:
-        logger.error(f"ZIP analysis failed: {e}")
+        logger.error(f"ZIP analysis failed: {str(e)}")
         raise HTTPException(500, detail=str(e))
         
 @router.post("/generate-fix")
